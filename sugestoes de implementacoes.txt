@@ -1,0 +1,19 @@
+Playlists guiadas de treino: sequência de vídeos/áudios por ficha (já tem áudio e vídeo) com timers automáticos entre exercícios e registro de carga/Reps por série.
+
+Recomendações personalizadas: “sugestão de carga/reps” baseada no histórico de execuções e PRs, com ajuste automático de progressão (double progression, RPE-alvo).
+
+Relatórios avançados: dashboards com volume semanal por grupo muscular, densidade de treino (kg/min), aderência por ficha e alertas de platô.
+
+Programação inteligente: gerador de microciclos com base em disponibilidade de dias, equipamentos e restrições (lesões), exportando direto para a ficha.
+
+Coach IA contextual: respostas que leem sua ficha atual, últimas execuções e histórico de evolução/nutrição, sugerindo ajustes no treino da semana.
+
+Biblioteca de mídia enriquecida: uploads de vídeo/thumbnail, cortes de clipes de execução do próprio usuário e comparação lado a lado com o vídeo oficial.
+
+Gamificação leve: streaks de check-ins, badges por volume/consistência, desafios semanais (por exemplo, “3 treinos A-B-C concluídos com descanso correto”).
+
+Integrações: sincronizar desgaste calórico e frequência cardíaca via wearables (Apple/Google/Fitbit) e importar medidas/fotos de evolução.
+
+Compartilhamento seguro: links de treino temporários para alunos/coach, com controle de acesso e duplicação da ficha.
+
+Export/backup: exportar ficha em PDF/CSV com imagens e passo a passo, e restore rápido de versões anteriores.

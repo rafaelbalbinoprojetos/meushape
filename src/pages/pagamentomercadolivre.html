@@ -1,0 +1,48 @@
+﻿<button id="payButton"
+  style="padding: 12px 24px; background: #009ee3; color: white; border: none; border-radius: 6px; cursor: pointer;">
+  Testar Pagamento (Produ??o)
+</button>
+
+<script>
+  const PUBLIC_KEY = "APP_USR-da38fb71-a0eb-4986-856e-4c7ca51d08cb";
+  const ACCESS_TOKEN = "APP_USR-5002146887060406-111223-4d881fcc34e1f00ae7156e83c85e8975-34626328";
+
+  document.getElementById("payButton").onclick = async () => {
+    try {
+      const res = await fetch(
+        "https://api.mercadopago.com/checkout/preferences",
+        {
+          method: "POST",
+          headers: {
+            "Authorization": `Bearer ${ACCESS_TOKEN}`,
+            "Content-Type": "application/json"
+          },
+          body: JSON.stringify({
+            items: [
+              {
+                title: "Teste de Pagamento GranaApp",
+                quantity: 1,
+                unit_price: 2.00,
+                currency_id: "BRL"
+              }
+            ],
+            back_urls: {
+              success: "https://granaapp.vercel.app",
+              failure: "https://granaapp.vercel.app",
+              pending: "https://granaapp.vercel.app"
+            },
+            auto_return: "approved"
+          })
+        }
+      );
+
+      const data = await res.json();
+
+      // Aqui est? o link EXATO do pagamento
+      window.location.href = data.init_point;
+    } catch (e) {
+      console.log("Erro:", e);
+      alert("Erro ao criar pagamento");
+    }
+  };
+</script>

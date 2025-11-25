@@ -1,0 +1,9 @@
+Critical - Todos os handlers em /api continuam publicos. api/chat.js, api/transcribe.js e api/mercadopago/* ainda nao validam Supabase JWT, plano ou origem, entao qualquer pessoa consegue gastar tokens do Coach IA ou disparar fluxos de pagamento apenas chamando esses endpoints.
+High - api/chat.js agora consulta treinos/exercicios/planos alimentares com a service key, mas continua retornando snapshots completos sem filtrar por usuario. Enquanto nao houver multitenancy, qualquer chamada ao coach pode expor dados de outros atletas.
+High - As tabelas principais do novo dominio (treinos, fichas_treino, exercicios, planos_alimentares, evolucoes) ainda estao sem RLS no script Supabase. O front continua gravando direto com a anon key, o que permite que qualquer assinante sobrescreva o conteudo global.
+Medium - O bloqueio de recursos premium continua apenas no cliente. Coach IA, nutricao dinamica e uploads ficam liberados para quem alterar o plan no localStorage ou chamar o endpoint diretamente.
+
+Proximos passos
+- Proteger todos os endpoints serverless verificando JWT do Supabase e o plano antes de executar acoes caras ou criticas.
+- Adicionar politicas RLS para treinos/exercicios/planos/evolucao e mover escritas para funcoes protegidas ou para a service role.
+- Filtrar fetchFitnessSnapshot para retornar apenas dados do usuario logado (ou workspace) e evitar vazamento de contexto entre clientes.

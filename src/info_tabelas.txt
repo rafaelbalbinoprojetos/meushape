@@ -1,0 +1,125 @@
+﻿create table public.exercicios (
+  id uuid not null default extensions.uuid_generate_v4 (),
+  nome text not null,
+  grupo public.grupo_muscular not null,
+  descricao text null,
+  equipamento text null,
+  video_url text null,
+  imagem_url text null,
+  criado_em timestamp without time zone null default now(),
+  atualizado_em timestamp without time zone null default now(),
+  tipo_execucao public.tipo_execucao_enum null,
+  nivel public.nivel_exercicio_enum null,
+  risco public.risco_exercicio_enum null,
+  execucao text null,
+  constraint exercicios_pkey primary key (id)
+) TABLESPACE pg_default;
+
+create index IF not exists idx_exercicios_grupo on public.exercicios using btree (grupo) TABLESPACE pg_default;
+
+create trigger set_timestamp_exercicios BEFORE
+update on exercicios for EACH row
+execute FUNCTION set_timestamp ();
+
+
+
+
+
+
+create table public.ficha_exercicios (
+  id uuid not null default extensions.uuid_generate_v4 (),
+  series integer not null default 3,
+  repeticoes text not null,
+  carga numeric(6, 2) null,
+  descanso_segundos integer null default 60,
+  ordem integer null default 1,
+  observacoes text null,
+  criado_em timestamp without time zone null default now(),
+  atualizado_em timestamp without time zone null default now(),
+  exercicio_id uuid not null,
+  treino_id uuid not null,
+  tecnica text null,
+  tempo_segundos integer null,
+  cadencia text null,
+  constraint ficha_exercicios_pkey primary key (id),
+  constraint ficha_exercicios_exercicio_id_fkey foreign KEY (exercicio_id) references exercicios (id) on delete CASCADE,
+  constraint ficha_exercicios_treino_id_fkey foreign KEY (treino_id) references ficha_treinos (id),
+  constraint chk_descanso check (
+    (
+      (descanso_segundos >= 0)
+      and (descanso_segundos <= 600)
+    )
+  ),
+  constraint chk_series check (
+    (
+      (series > 0)
+      and (series < 20)
+    )
+  )
+) TABLESPACE pg_default;
+
+create index IF not exists idx_ficha_exercicios_treino_id on public.ficha_exercicios using btree (treino_id) TABLESPACE pg_default;
+
+create trigger set_timestamp_ficha_exercicios BEFORE
+update on ficha_exercicios for EACH row
+execute FUNCTION set_timestamp ();
+
+create trigger trg_auto_ordem_ficha_exercicios BEFORE INSERT on ficha_exercicios for EACH row
+execute FUNCTION definir_ordem_ficha_exercicios ();
+
+
+
+
+
+create table public.ficha_treinos (
+  id uuid not null default gen_random_uuid (),
+  ficha_id uuid null,
+  nome text not null,
+  descricao text null,
+  ordem integer not null default 1,
+  criado_em timestamp without time zone null default now(),
+  atualizado_em timestamp without time zone null default now(),
+  subdivisao text not null default 'A'::text,
+  subdivisao_ordem smallint GENERATED ALWAYS as (GREATEST(1, (ascii(subdivisao) - 64))) STORED null,
+  subdivisao_label text GENERATED ALWAYS as (('Treino '::text || subdivisao)) STORED null,
+  constraint ficha_treinos_pkey primary key (id),
+  constraint ficha_treinos_ficha_subdivisao_key unique (ficha_id, subdivisao),
+  constraint ficha_treinos_ficha_id_fkey foreign KEY (ficha_id) references fichas (id) on delete CASCADE
+) TABLESPACE pg_default;
+
+create index IF not exists idx_ficha_treinos_ficha_id on public.ficha_treinos using btree (ficha_id) TABLESPACE pg_default;
+
+create index IF not exists ficha_treinos_ficha_ordem_idx on public.ficha_treinos using btree (ficha_id, subdivisao_ordem, ordem) TABLESPACE pg_default;
+
+create trigger set_timestamp_ficha_treinos BEFORE
+update on ficha_treinos for EACH row
+execute FUNCTION set_timestamp ();
+
+
+
+create table public.fichas (
+  id uuid not null default extensions.uuid_generate_v4 (),
+  usuario_id uuid null,
+  nome text not null,
+  descricao text null,
+  criado_em timestamp without time zone null default now(),
+  atualizado_em timestamp without time zone null default now(),
+  nivel text null,
+  objetivo text null,
+  thumbnail_url text null,
+  capa_url text null,
+  visibilidade text not null default 'publica'::text,
+  constraint fichas_pkey primary key (id),
+  constraint fichas_usuario_id_fkey foreign KEY (usuario_id) references auth.users (id) on delete CASCADE,
+  constraint fichas_visibilidade_check check (
+    (
+      visibilidade = any (
+        array['publica'::text, 'privada'::text, 'oculta'::text]
+      )
+    )
+  )
+) TABLESPACE pg_default;
+
+create trigger set_timestamp_fichas BEFORE
+update on fichas for EACH row
+execute FUNCTION set_timestamp ();
