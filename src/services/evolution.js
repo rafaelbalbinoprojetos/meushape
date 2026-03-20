@@ -156,6 +156,68 @@ export async function fetchEvolutionStats({ usuarioId, days = 30 } = {}) {
   };
 }
 
+export async function fetchLatestEvolution(usuarioId) {
+  if (!usuarioId) throw new Error("Informe o usuario para carregar a evolução.");
+  const { data, error } = await supabase
+    .from("evolucao")
+    .select(
+      `
+        id,
+        data,
+        peso,
+        altura,
+        imc,
+        gordura_corporal,
+        massa_magra,
+        peito,
+        braco,
+        braco_contraido,
+        cintura,
+        quadril,
+        perna,
+        coxa_esquerda,
+        coxa_direita,
+        panturrilha_esquerda,
+        panturrilha_direita,
+        ficha_id
+      `,
+    )
+    .eq("usuario_id", usuarioId)
+    .order("data", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (error) throw error;
+  return data;
+}
+
+export async function getWeightHistory({ usuarioId, limit = 12 } = {}) {
+  if (!usuarioId) {
+    throw new Error("Informe o usuario para carregar o histórico de peso.");
+  }
+  const { data, error } = await supabase
+    .from("evolucao")
+    .select("id, data, peso")
+    .eq("usuario_id", usuarioId)
+    .order("data", { ascending: false })
+    .limit(limit);
+  if (error) throw error;
+  return data ?? [];
+}
+
+export async function getLatestMeasures({ usuarioId, limit = 2 } = {}) {
+  if (!usuarioId) {
+    throw new Error("Informe o usuario para carregar medidas.");
+  }
+  const { data, error } = await supabase
+    .from("evolucao")
+    .select("id, data, peso, braco, peito, cintura, quadril, perna, braco_contraido, coxa_esquerda, coxa_direita, panturrilha_esquerda, panturrilha_direita")
+    .eq("usuario_id", usuarioId)
+    .order("data", { ascending: false })
+    .limit(limit);
+  if (error) throw error;
+  return data ?? [];
+}
+
 export async function upsertMeasurement({
   id = null,
   usuarioId,
@@ -231,4 +293,88 @@ export async function deleteMeasurement({ id, usuarioId } = {}) {
   const { error } = await supabase.from("evolucao").delete().eq("id", id).eq("usuario_id", usuarioId);
   if (error) throw error;
   return true;
+}
+
+const EVOLUCAO_FIELDS = [
+  "peso",
+  "braco",
+  "peito",
+  "cintura",
+  "quadril",
+  "perna",
+  "gordura_corporal",
+  "data",
+  "altura",
+  "imc",
+  "massa_magra",
+  "gordura_visceral",
+  "braco_contraido",
+  "coxa_esquerda",
+  "coxa_direita",
+  "panturrilha_esquerda",
+  "panturrilha_direita",
+  "cabeca_projetada",
+  "ombros_avancados",
+  "hipercifose",
+  "anteversao_pelve",
+  "joelho_valgo",
+  "flexao_qtd",
+  "abdominal_qtd",
+  "prancha_tempo_seg",
+  "ficha_id",
+  "braco_esquerdo",
+  "braco_direito",
+  "perna_esquerda",
+  "perna_direita",
+  "musculo_percentual",
+  "agua_percentual",
+  "gordura_subcutanea",
+  "proteina_percentual",
+  "peso_osseo",
+  "peso_muscular",
+  "peso_livre_gordura",
+  "diferenca_peso",
+  "diferenca_gordura",
+  "diferenca_musculo",
+  "musculo_braco_direito",
+  "musculo_braco_esquerdo",
+  "musculo_tronco",
+  "musculo_perna_direita",
+  "musculo_perna_esquerda",
+  "gordura_braco_direito",
+  "gordura_braco_esquerdo",
+  "gordura_tronco",
+  "gordura_perna_direita",
+  "gordura_perna_esquerda",
+  "cintura_quadril",
+  "classificacao_corporal",
+  "pontuacao_saude",
+  "idade_corporal",
+  "ingestao_diaria_kcal",
+  "aerobicos_kcal",
+  "resistencia_kcal",
+  "anaerobico_kcal",
+  "braco_direito_20khz",
+  "braco_direito_100khz",
+  "braco_esquerdo_20khz",
+  "braco_esquerdo_100khz",
+  "tronco_20khz",
+  "tronco_100khz",
+  "perna_direita_20khz",
+  "perna_direita_100khz",
+  "perna_esquerda_20khz",
+  "perna_esquerda_100khz",
+];
+
+export async function insertEvolutionReport({ usuarioId, fields = {} } = {}) {
+  if (!usuarioId) throw new Error("Informe o usuario.");
+  const payload = { usuario_id: usuarioId };
+  EVOLUCAO_FIELDS.forEach((key) => {
+    if (fields[key] !== undefined && fields[key] !== null && fields[key] !== "") {
+      payload[key] = fields[key];
+    }
+  });
+  const { data, error } = await supabase.from("evolucao").insert(payload).select().single();
+  if (error) throw error;
+  return data;
 }

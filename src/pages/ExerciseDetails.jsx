@@ -29,6 +29,15 @@ function parseExecutionSteps(execucao) {
     .filter(Boolean);
 }
 
+function parseList(value) {
+  if (!value) return [];
+  if (Array.isArray(value)) return value.filter(Boolean);
+  return value
+    .split(/\r?\n|,/)
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
 function normalizeGroup(group) {
   if (!group) return "Grupo livre";
   return group.normalize("NFD").replace(/[\u0300-\u036f]/g, "");
@@ -57,6 +66,12 @@ export default function ExerciseDetailsPage() {
     video_url: "",
     imagem_url: "",
     execucao: "",
+    erros_comuns: "",
+    dicas_execucao: "",
+    variacoes: "",
+    musculos_secundarios: "",
+    biomecanica: "",
+    foco_estimulo: "",
   });
   const [saving, setSaving] = useState(false);
   const [uploading, setUploading] = useState(false);
@@ -84,6 +99,12 @@ export default function ExerciseDetailsPage() {
           video_url: data.video_url ?? "",
           imagem_url: data.imagem_url ?? "",
           execucao: data.execucao ?? "",
+          erros_comuns: data.erros_comuns ?? "",
+          dicas_execucao: data.dicas_execucao ?? "",
+          variacoes: data.variacoes ?? "",
+          musculos_secundarios: data.musculos_secundarios ?? "",
+          biomecanica: data.biomecanica ?? data.estimulo_principal ?? "",
+          foco_estimulo: data.foco_estimulo ?? data.estimulo ?? "",
         });
       } catch (err) {
         if (!active) return;
@@ -103,8 +124,19 @@ export default function ExerciseDetailsPage() {
   const { loading, error, exercise } = state;
   const canEdit = Boolean(user?.email && user.email.toLowerCase() === "balbino10@hotmail.com");
   const steps = useMemo(() => parseExecutionSteps(exercise?.execucao ?? ""), [exercise]);
+  const errosComuns = useMemo(() => parseList(exercise?.erros_comuns ?? ""), [exercise]);
+  const dicasExecucao = useMemo(() => parseList(exercise?.dicas_execucao ?? ""), [exercise]);
+  const variacoes = useMemo(() => parseList(exercise?.variacoes ?? ""), [exercise]);
+  const musculosSecundarios = useMemo(() => parseList(exercise?.musculos_secundarios ?? ""), [exercise]);
   const levelTag = exercise?.nivel ? LEVEL_BADGES[exercise.nivel.toLowerCase()] : null;
   const riskTag = exercise?.risco ? RISK_BADGES[exercise.risco.toLowerCase()] : null;
+  const biomecanica = exercise?.biomecanica || exercise?.estimulo_principal || "Mecânico guiado";
+  const padraoMovimento = exercise?.padrao_movimento || "Remada horizontal";
+  const contracao = exercise?.contracao_predominante || "Concêntrica + excêntrica controlada";
+  const focoEstimulo = exercise?.foco_estimulo || exercise?.estimulo || "Metabólico / estabilidade";
+  const duracaoVideo = exercise?.duracao_video_seg ? `${exercise.duracao_video_seg}s` : null;
+  const gravadoPor = exercise?.gravado_por || exercise?.autor || "Coach";
+  const sugestaoABC = exercise?.sugestao_abc || "Melhor usar no treino B (costas) • Combina: puxada alta, remada baixa • Após movimento vertical";
 
   const handleFieldChange = (field, value) => {
     setForm((prev) => ({ ...prev, [field]: value }));
@@ -292,14 +324,20 @@ export default function ExerciseDetailsPage() {
                     loading="lazy"
                   />
                   {exercise.video_url ? (
-                    <button
-                      type="button"
-                      onClick={() => setShowVideo(true)}
-                      className="absolute left-4 top-4 inline-flex items-center gap-2 rounded-full bg-black/70 px-4 py-1 text-xs font-semibold uppercase tracking-[0.35em] text-white transition hover:bg-black/80"
-                    >
-                      <Play className="h-4 w-4" />
-                      Assistir vídeo
-                    </button>
+                    <>
+                      <div className="absolute inset-0 bg-gradient-to-t from-black/70 via-black/30 to-transparent" />
+                      <button
+                        type="button"
+                        onClick={() => setShowVideo(true)}
+                        className="absolute inset-0 m-auto flex h-14 w-14 items-center justify-center rounded-full bg-white/90 text-[#0b1932] shadow-xl shadow-black/40 transition hover:scale-105"
+                      >
+                        <Play className="h-6 w-6" />
+                      </button>
+                      <div className="absolute left-4 bottom-4 flex flex-wrap items-center gap-2 text-xs font-semibold uppercase tracking-[0.35em] text-white">
+                        {duracaoVideo ? <span className="rounded-full bg-black/60 px-3 py-1">Duração {duracaoVideo}</span> : null}
+                        <span className="rounded-full bg-black/60 px-3 py-1">Gravado por: {gravadoPor}</span>
+                      </div>
+                    </>
                   ) : (
                     <span className="absolute left-4 top-4 rounded-full bg-black/40 px-4 py-1 text-xs font-semibold uppercase tracking-[0.35em] text-white/80">
                       Sem video
@@ -319,21 +357,28 @@ export default function ExerciseDetailsPage() {
 
           <section className="grid gap-6 lg:grid-cols-[1.6fr,1fr]">
             <div className="rounded-[32px] border border-white/10 bg-white/70 p-6 shadow-xl dark:bg-slate-900/70">
-              <p className="text-xs uppercase tracking-[0.35em] text-[rgb(var(--text-secondary))]">Execucao guiada</p>
+              <p className="text-xs uppercase tracking-[0.35em] text-[rgb(var(--text-secondary))]">Execução passo a passo</p>
               {steps.length === 0 ? (
                 <p className="mt-4 text-sm text-[rgb(var(--text-secondary))]">
                   Nenhuma instrução cadastrada ainda. Preencha o campo <code>execucao</code> no Supabase para orientar o aluno.
                 </p>
               ) : (
                 <ol className="mt-4 space-y-3">
-                  {steps.map((step, index) => (
-                    <li key={`step-${index}`} className="rounded-2xl border border-white/40 bg-white/40 p-4 text-[rgb(var(--text-primary))] dark:border-white/5 dark:bg-white/5">
-                      <span className="text-xs font-semibold uppercase tracking-[0.35em] text-[rgb(var(--text-secondary))]">
-                        Passo {index + 1}
-                      </span>
-                      <p className="mt-2 text-base">{step}</p>
-                    </li>
-                  ))}
+                  {steps.map((step, index) => {
+                    const icons = ["👉", "💪", "⏱️", "⚠️"];
+                    const icon = icons[index] || "💡";
+                    return (
+                      <li key={`step-${index}`} className="flex gap-3 rounded-2xl border border-white/40 bg-white/40 p-4 text-[rgb(var(--text-primary))] dark:border-white/5 dark:bg-white/5">
+                        <span className="text-lg">{icon}</span>
+                        <div>
+                          <span className="text-xs font-semibold uppercase tracking-[0.35em] text-[rgb(var(--text-secondary))]">
+                            Passo {index + 1}
+                          </span>
+                          <p className="mt-2 text-base">{step}</p>
+                        </div>
+                      </li>
+                    );
+                  })}
                 </ol>
               )}
             </div>
@@ -406,6 +451,68 @@ export default function ExerciseDetailsPage() {
                         className="w-full rounded-xl border border-white/40 bg-white px-3 py-2 text-sm outline-none ring-2 ring-transparent focus:border-[#32C5FF] focus:ring-[#32C5FF]/20 dark:border-slate-700 dark:bg-slate-900 dark:text-white"
                       />
                     </label>
+                    <label className="space-y-1">
+                      <span className="text-[rgb(var(--text-secondary))]">Erros comuns (1 por linha)</span>
+                      <textarea
+                        rows="3"
+                        value={form.erros_comuns}
+                        onChange={(e) => handleFieldChange("erros_comuns", e.target.value)}
+                        className="w-full rounded-xl border border-white/40 bg-white px-3 py-2 text-sm outline-none ring-2 ring-transparent focus:border-[#32C5FF] focus:ring-[#32C5FF]/20 dark:border-slate-700 dark:bg-slate-900 dark:text-white"
+                      />
+                    </label>
+                    <label className="space-y-1">
+                      <span className="text-[rgb(var(--text-secondary))]">Dicas de execução (1 por linha)</span>
+                      <textarea
+                        rows="3"
+                        value={form.dicas_execucao}
+                        onChange={(e) => handleFieldChange("dicas_execucao", e.target.value)}
+                        className="w-full rounded-xl border border-white/40 bg-white px-3 py-2 text-sm outline-none ring-2 ring-transparent focus:border-[#32C5FF] focus:ring-[#32C5FF]/20 dark:border-slate-700 dark:bg-slate-900 dark:text-white"
+                      />
+                    </label>
+                    <label className="space-y-1">
+                      <span className="text-[rgb(var(--text-secondary))]">Variações (1 por linha)</span>
+                      <textarea
+                        rows="3"
+                        value={form.variacoes}
+                        onChange={(e) => handleFieldChange("variacoes", e.target.value)}
+                        className="w-full rounded-xl border border-white/40 bg-white px-3 py-2 text-sm outline-none ring-2 ring-transparent focus:border-[#32C5FF] focus:ring-[#32C5FF]/20 dark:border-slate-700 dark:bg-slate-900 dark:text-white"
+                      />
+                    </label>
+                    <label className="space-y-1">
+                      <span className="text-[rgb(var(--text-secondary))]">Músculos secundários (1 por linha)</span>
+                      <textarea
+                        rows="3"
+                        value={form.musculos_secundarios}
+                        onChange={(e) => handleFieldChange("musculos_secundarios", e.target.value)}
+                        className="w-full rounded-xl border border-white/40 bg-white px-3 py-2 text-sm outline-none ring-2 ring-transparent focus:border-[#32C5FF] focus:ring-[#32C5FF]/20 dark:border-slate-700 dark:bg-slate-900 dark:text-white"
+                      />
+                    </label>
+                    <div className="grid gap-3 md:grid-cols-3">
+                      <label className="space-y-1">
+                        <span className="text-[rgb(var(--text-secondary))]">Tipo de estímulo</span>
+                        <input
+                          value={form.biomecanica}
+                          onChange={(e) => handleFieldChange("biomecanica", e.target.value)}
+                          className="w-full rounded-xl border border-white/40 bg-white px-3 py-2 text-sm outline-none ring-2 ring-transparent focus:border-[#32C5FF] focus:ring-[#32C5FF]/20 dark:border-slate-700 dark:bg-slate-900 dark:text-white"
+                        />
+                      </label>
+                      <label className="space-y-1">
+                        <span className="text-[rgb(var(--text-secondary))]">Padrão de movimento / foco</span>
+                        <input
+                          value={form.foco_estimulo}
+                          onChange={(e) => handleFieldChange("foco_estimulo", e.target.value)}
+                          className="w-full rounded-xl border border-white/40 bg-white px-3 py-2 text-sm outline-none ring-2 ring-transparent focus:border-[#32C5FF] focus:ring-[#32C5FF]/20 dark:border-slate-700 dark:bg-slate-900 dark:text-white"
+                        />
+                      </label>
+                      <label className="space-y-1">
+                        <span className="text-[rgb(var(--text-secondary))]">Sugestão ABC</span>
+                        <input
+                          value={form.sugestao_abc || ""}
+                          onChange={(e) => handleFieldChange("sugestao_abc", e.target.value)}
+                          className="w-full rounded-xl border border-white/40 bg-white px-3 py-2 text-sm outline-none ring-2 ring-transparent focus:border-[#32C5FF] focus:ring-[#32C5FF]/20 dark:border-slate-700 dark:bg-slate-900 dark:text-white"
+                        />
+                      </label>
+                    </div>
                     <div className="flex flex-wrap items-center gap-3">
                       <label className="inline-flex items-center gap-2 rounded-xl border border-white/40 bg-white px-3 py-2 text-xs font-semibold text-[rgb(var(--text-secondary))] dark:border-slate-700 dark:bg-slate-900 dark:text-white">
                         <input
@@ -460,6 +567,15 @@ export default function ExerciseDetailsPage() {
                     <dd className="mt-2 break-all text-[rgb(var(--text-primary))]">{exercise.id}</dd>
                   </div>
                   <div className="rounded-2xl border border-white/30 bg-white/40 p-4 dark:border-white/10 dark:bg-white/5">
+                    <dt className="text-xs uppercase tracking-[0.35em]">Características biomecânicas</dt>
+                    <dd className="mt-2 space-y-1 text-[rgb(var(--text-primary))]">
+                      <p>🔵 Estímulo: {biomecanica}</p>
+                      <p>🟡 Padrão: {padraoMovimento}</p>
+                      <p>🔴 Contração: {contracao}</p>
+                      <p>🎯 Foco: {focoEstimulo}</p>
+                    </dd>
+                  </div>
+                  <div className="rounded-2xl border border-white/30 bg-white/40 p-4 dark:border-white/10 dark:bg-white/5">
                     <dt className="text-xs uppercase tracking-[0.35em]">Video</dt>
                     <dd className="mt-2 text-[rgb(var(--text-primary))]">
                       {exercise.video_url ? (
@@ -493,7 +609,95 @@ export default function ExerciseDetailsPage() {
                       )}
                     </dd>
                   </div>
+                  {musculosSecundarios.length > 0 ? (
+                    <div className="rounded-2xl border border-white/30 bg-white/40 p-4 dark:border-white/10 dark:bg-white/5">
+                      <dt className="text-xs uppercase tracking-[0.35em]">Músculos secundários</dt>
+                      <dd className="mt-2 text-[rgb(var(--text-primary))]">
+                        <ul className="flex flex-wrap gap-2 text-xs">
+                          {musculosSecundarios.map((musculo) => (
+                            <li key={musculo} className="rounded-full bg-[rgba(15,31,60,0.08)] px-3 py-1 dark:bg-white/10 dark:text-white/80">
+                              {musculo}
+                            </li>
+                          ))}
+                        </ul>
+                      </dd>
+                    </div>
+                  ) : null}
+                  <div className="rounded-2xl border border-dashed border-[#32C5FF]/40 bg-white/40 p-4 text-[rgb(var(--text-primary))] dark:border-white/10 dark:bg-white/5">
+                    <dt className="text-xs uppercase tracking-[0.35em]">Sugestão ABC</dt>
+                    <dd className="mt-2 text-sm">{sugestaoABC}</dd>
+                  </div>
                 </dl>
+              </div>
+            </div>
+          </section>
+
+          <section className="grid gap-6 lg:grid-cols-2">
+            <div className="rounded-[32px] border border-white/10 bg-white/70 p-6 shadow-xl dark:bg-slate-900/70">
+              <p className="text-xs uppercase tracking-[0.35em] text-[rgb(var(--text-secondary))]">Erros comuns</p>
+              {errosComuns.length === 0 ? (
+                <p className="mt-3 text-sm text-[rgb(var(--text-secondary))]">Sem erros cadastrados.</p>
+              ) : (
+                <ul className="mt-3 space-y-2 text-sm text-[rgb(var(--text-secondary))]">
+                  {errosComuns.map((item, index) => (
+                    <li key={`erro-${index}`} className="flex gap-2 rounded-2xl border border-white/40 bg-white/60 px-3 py-2 dark:border-white/10 dark:bg-white/5">
+                      <span className="text-lg">⚠️</span>
+                      <span>{item}</span>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+            <div className="rounded-[32px] border border-white/10 bg-white/70 p-6 shadow-xl dark:bg-slate-900/70">
+              <p className="text-xs uppercase tracking-[0.35em] text-[rgb(var(--text-secondary))]">Dicas de execução</p>
+              {dicasExecucao.length === 0 ? (
+                <p className="mt-3 text-sm text-[rgb(var(--text-secondary))]">Sem cues cadastrados.</p>
+              ) : (
+                <ul className="mt-3 space-y-2 text-sm text-[rgb(var(--text-secondary))]">
+                  {dicasExecucao.map((item, index) => (
+                    <li key={`dica-${index}`} className="flex gap-2 rounded-2xl border border-white/40 bg-white/60 px-3 py-2 dark:border-white/10 dark:bg-white/5">
+                      <span className="text-lg">💡</span>
+                      <span>{item}</span>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          </section>
+
+          <section className="grid gap-6 lg:grid-cols-2">
+            <div className="rounded-[32px] border border-white/10 bg-white/70 p-6 shadow-xl dark:bg-slate-900/70">
+              <p className="text-xs uppercase tracking-[0.35em] text-[rgb(var(--text-subtle))]">Variações</p>
+              {variacoes.length === 0 ? (
+                <p className="mt-3 text-sm text-[rgb(var(--text-secondary))]">Nenhuma variação cadastrada.</p>
+              ) : (
+                <ul className="mt-3 space-y-2 text-sm text-[rgb(var(--text-secondary))]">
+                  {variacoes.map((item, index) => (
+                    <li key={`variacao-${index}`} className="flex gap-2 rounded-2xl border border-white/40 bg-white/60 px-3 py-2 dark:border-white/10 dark:bg-white/5">
+                      <span className="text-lg">🔀</span>
+                      <span>{item}</span>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+            <div className="rounded-[32px] border border-white/10 bg-white/70 p-6 shadow-xl dark:bg-slate-900/70">
+              <p className="text-xs uppercase tracking-[0.35em] text-[rgb(var(--text-subtle))]">Mapa de músculos</p>
+              <div className="mt-3 grid gap-3 text-sm text-[rgb(var(--text-secondary))] sm:grid-cols-[1.4fr,1fr]">
+                <div className="rounded-3xl border border-white/40 bg-white/70 p-4 dark:border-white/10 dark:bg-white/5">
+                  <p className="text-xs uppercase tracking-[0.3em] text-[rgb(var(--text-subtle))]">Principal</p>
+                  <p className="text-lg font-semibold text-[rgb(var(--text-primary))]">{normalizeGroup(exercise.grupo)}</p>
+                  <p className="text-xs text-[rgb(var(--text-secondary))]">Ativação máxima</p>
+                </div>
+                <div className="space-y-2">
+                  {musculosSecundarios.slice(0, 3).map((musculo) => (
+                    <div key={musculo} className="flex items-center gap-2 rounded-2xl bg-white/70 px-3 py-2 text-xs text-[rgb(var(--text-secondary))] dark:bg-white/5 dark:text-white/80">
+                      <span className="h-2 w-2 rounded-full bg-[rgba(50,197,255,0.5)]" />
+                      <span>{musculo}</span>
+                    </div>
+                  ))}
+                  {musculosSecundarios.length === 0 && <p className="text-xs text-[rgb(var(--text-secondary))]">Cadastre músculos secundários.</p>}
+                </div>
               </div>
             </div>
           </section>
@@ -547,13 +751,19 @@ export default function ExerciseDetailsPage() {
                 ) : (
                   <ol className="space-y-2 text-sm text-white/80">
                     {steps.map((step, index) => (
-                      <li key={`modal-step-${index}`} className="rounded-xl border border-white/10 bg-white/5 px-3 py-2">
-                        <span className="text-xs font-semibold uppercase tracking-[0.3em] text-white/60">Passo {index + 1}</span>
-                        <p className="mt-1">{step}</p>
+                      <li key={`modal-step-${index}`} className="flex gap-2 rounded-xl border border-white/10 bg-white/5 px-3 py-2">
+                        <span className="text-lg">{["👉", "💪", "⏱️", "⚠️"][index] || "💡"}</span>
+                        <div>
+                          <span className="text-xs font-semibold uppercase tracking-[0.3em] text-white/60">Passo {index + 1}</span>
+                          <p className="mt-1">{step}</p>
+                        </div>
                       </li>
                     ))}
                   </ol>
                 )}
+                <div className="rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-xs text-white/70">
+                  Modo professor: reproduza em 0.5x para ver detalhes de controle excêntrico.
+                </div>
               </div>
             </div>
           </div>

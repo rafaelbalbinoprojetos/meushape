@@ -4,7 +4,7 @@ import { useTheme } from "../context/ThemeContext.jsx";
 export default function ThemeMenu() {
   const [open, setOpen] = React.useState(false);
   const containerRef = React.useRef(null);
-  const { themes, theme, selectTheme } = useTheme();
+  const { themes, theme, selectTheme, isDark } = useTheme();
 
   const lightThemes = React.useMemo(() => themes.filter((preset) => preset.mode === "light"), [themes]);
   const darkThemes = React.useMemo(() => themes.filter((preset) => preset.mode === "dark"), [themes]);
@@ -50,8 +50,8 @@ export default function ThemeMenu() {
         }`}
         title="Selecionar tema"
       >
-        <span className="sr-only">{open ? "Fechar sele��o de temas" : "Abrir sele��o de temas"}</span>
-        <PaletteIcon className="h-5 w-5" />
+        <span className="sr-only">{open ? "Fechar seleção de temas" : "Abrir seleção de temas"}</span>
+        <ThemeIcon className="h-5 w-5" />
       </button>
 
       {open && (
@@ -59,25 +59,30 @@ export default function ThemeMenu() {
           id="theme-menu"
           role="dialog"
           aria-modal="false"
-          className="absolute right-0 top-12 z-40 flex w-80 max-h-[80vh] flex-col rounded-xl border border-gray-200 bg-white p-4 text-sm shadow-2xl dark:border-gray-800 dark:bg-gray-900"
+          className="absolute right-0 top-12 z-40 flex w-80 max-h-[80vh] flex-col rounded-xl border p-4 text-sm shadow-2xl backdrop-blur-md dark:border-gray-800 dark:bg-gray-900/95 dark:shadow-black/30"
+          style={{
+            backgroundColor: isDark ? "rgba(15,23,42,0.92)" : "rgba(255,255,255,0.96)",
+            borderColor: isDark ? "rgba(255,255,255,0.08)" : "rgba(229,229,234,0.8)",
+            boxShadow: isDark
+              ? "0 25px 60px -35px rgba(0,0,0,0.45)"
+              : "0 25px 60px -35px rgba(15,31,60,0.18)",
+          }}
         >
-          <header className="border-b border-gray-200 pb-3 dark:border-gray-800">
-            <p className="text-sm font-semibold text-gray-900 dark:text-gray-100">Temas MEU SHAPE</p>
-            <p className="text-xs text-gray-500 dark:text-gray-400">
-              Alterne entre as paletas claras e escuras energ�ticas.
-            </p>
+          <header className="border-b border-[color:var(--border-soft)] pb-3 dark:border-gray-800">
+            <p className="text-sm font-semibold text-[rgb(var(--text-primary))] dark:text-gray-100">Temas MEU SHAPE</p>
+            <p className="text-xs text-[rgb(var(--text-secondary))] dark:text-gray-400">Alterne entre as paletas claras e escuras energéticas.</p>
           </header>
 
           <div className="mt-3 flex-1 overflow-y-auto pr-1">
             <section>
-              <span className="text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">
+              <span className="text-xs font-semibold uppercase tracking-wide text-[rgb(var(--text-subtle))] dark:text-gray-400">
                 Temas claros
               </span>
               <ThemeGrid themes={lightThemes} activeId={theme?.id} onSelect={handleSelect} />
             </section>
 
             <section className="mt-4">
-              <span className="text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">
+              <span className="text-xs font-semibold uppercase tracking-wide text-[rgb(var(--text-subtle))] dark:text-gray-400">
                 Temas escuros
               </span>
               <ThemeGrid themes={darkThemes} activeId={theme?.id} onSelect={handleSelect} />
@@ -93,7 +98,7 @@ function ThemeGrid({ themes, activeId, onSelect }) {
   if (!themes.length) {
     return (
       <p className="mt-2 rounded-lg bg-gray-100 px-3 py-2 text-xs text-gray-500 dark:bg-gray-800 dark:text-gray-400">
-        Nenhum tema dispon�vel.
+        Nenhum tema disponível.
       </p>
     );
   }
@@ -130,10 +135,17 @@ function ThemeGrid({ themes, activeId, onSelect }) {
   );
 }
 
-function PaletteIcon({ className }) {
+function ThemeIcon({ className }) {
   return (
-    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className={className} aria-hidden="true">
-      <path d="M12 2a10 10 0 00-7.07 17.07 1.75 1.75 0 001.59.48l1.73-.4a2.25 2.25 0 011.77.37l2.16 1.62a1.75 1.75 0 002.76-1.4v-.78a2.25 2.25 0 012.25-2.25h1.94a1.75 1.75 0 001.71-2.23A10 10 0 0012 2zm-4.5 6a1.25 1.25 0 111.25-1.25A1.25 1.25 0 017.5 8zm3 3A1.25 1.25 0 1111.75 9.75 1.25 1.25 0 0110.5 11zm3-5.5A1.25 1.25 0 1114.75 4.25 1.25 1.25 0 0113.5 5.5zm2.75 5.5A1.25 1.25 0 1117.5 9.75 1.25 1.25 0 0116.25 11z" />
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" className={className} aria-hidden="true">
+      <path
+        d="M12 4.25a7.75 7.75 0 107.75 7.75c0-.37-.03-.73-.08-1.08a6 6 0 01-7.17-6.92c-.17-.02-.33-.03-.5-.03z"
+        stroke="currentColor"
+        strokeWidth="1.6"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+      <path d="M12 2v2.1M12 19.9V22M2 12h2.1M19.9 12H22M4.4 4.4l1.5 1.5M18.1 18.1l1.5 1.5" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
     </svg>
   );
 }

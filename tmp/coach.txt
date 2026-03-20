@@ -1,0 +1,1508 @@
+import React, { useMemo, useRef, useState } from "react";
+import toast from "react-hot-toast";
+import { SAMPLE_COACH_PROMPTS } from "../data/fitness.js";
+import { useAuth } from "../context/AuthContext.jsx";
+import { fetchLatestEvolution, insertEvolutionReport } from "../services/evolution.js";
+import { insertConsumedMeal, salvarRefeicao } from "../services/meals.js";
+import { supabase } from "../lib/supabase.js";
+
+const API_BASE = (import.meta.env.VITE_API_BASE || "").replace(/\/$/, "");
+const INITIAL_MESSAGE =
+  "Olá! Sou o Coach IA do MEU SHAPE. Posso ajustar seus treinos, rever macros, comparar fotos e sugerir cargas com base no histórico.";
+const STORAGE_PREFIX = "coach_chat_v1";
+
+const getChatStorageKey = (userId) => `${STORAGE_PREFIX}:${userId || "guest"}`;
+
+function selectModel({ hasImage = false, isLong = false } = {}) {
+  if (hasImage) return "gpt-4o";
+  return "gpt-4o-mini";
+}
+
+const toNumber = (value) => {
+  if (value === null || value === undefined || value === "") return null;
+  const normalized = typeof value === "string" ? value.replace(",", ".") : value;
+  const num = Number(normalized);
+  return Number.isFinite(num) ? num : null;
+};
+
+const toInt = (value) => {
+  const num = toNumber(value);
+  return num === null ? null : Math.round(num);
+};
+
+const normalizeDate = (value) => {
+  if (!value) return null;
+  if (value instanceof Date) return value.toISOString().slice(0, 10);
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    if (!trimmed) return null;
+    if (/^\d{4}-\d{2}-\d{2}/.test(trimmed)) return trimmed.slice(0, 10);
+  }
+  return null;
+};
+
+const normalizeAltura = (value) => {
+  const num = toNumber(value);
+  if (!num) return null;
+  return num > 3 ? Number((num / 100).toFixed(2)) : num;
+};
+
+const buildEvolutionPayload = (bioJson = {}) => {
+  const identificacao = bioJson.identificacao || {};
+  const composicao = bioJson.composicao_corporal || {};
+  const segmentar = bioJson.analise_segmentar || {};
+  const obesidade = bioJson.obesidade || {};
+  const pontuacoes = bioJson.pontuacoes || {};
+  const consumo = bioJson.consumo_calorico || {};
+  const bioimp = bioJson.bioimpedancia_segmento || {};
+  const postura = bioJson.postura_frontal || {};
+
+  return {
+    data: normalizeDate(identificacao.data_avaliacao),
+    peso: toNumber(composicao.peso),
+    gordura_corporal: toNumber(composicao.gordura_percentual),
+    musculo_percentual: toNumber(composicao.musculo_percentual),
+    agua_percentual: toNumber(composicao.agua_percentual),
+    gordura_visceral: toNumber(composicao.gordura_visceral),
+    gordura_subcutanea: toNumber(composicao.gordura_subcutanea),
+    massa_magra: toNumber(composicao.massa_magra),
+    peso_muscular: toNumber(composicao.peso_muscular),
+    peso_osseo: toNumber(composicao.peso_osseo),
+    proteina_percentual: toNumber(composicao.proteina_percentual),
+    peso_livre_gordura: toNumber(composicao.peso_livre_gordura),
+    diferenca_peso: toNumber(composicao.diferenca_peso),
+    diferenca_gordura: toNumber(composicao.diferenca_gordura),
+    diferenca_musculo: toNumber(composicao.diferenca_musculo),
+    altura: normalizeAltura(identificacao.altura_cm ?? bioJson.altura),
+    imc: toNumber(obesidade.imc ?? bioJson.imc),
+    cintura_quadril: toNumber(obesidade.cintura_quadril),
+    classificacao_corporal: obesidade.classificacao_corporal ?? null,
+    pontuacao_saude: toNumber(pontuacoes.pontuacao_saude),
+    idade_corporal: toInt(pontuacoes.idade_corporal),
+    ingestao_diaria_kcal: toInt(consumo.ingestao_diaria_kcal),
+    aerobicos_kcal: toInt(consumo.aerobicos_kcal),
+    resistencia_kcal: toInt(consumo.resistencia_kcal),
+    anaerobico_kcal: toInt(consumo.anaerobico_kcal),
+    musculo_braco_direito: toNumber(segmentar?.braco_direito?.musculo_kg),
+    musculo_braco_esquerdo: toNumber(segmentar?.braco_esquerdo?.musculo_kg),
+    musculo_tronco: toNumber(segmentar?.tronco?.musculo_kg),
+    musculo_perna_direita: toNumber(segmentar?.perna_direita?.musculo_kg),
+    musculo_perna_esquerda: toNumber(segmentar?.perna_esquerda?.musculo_kg),
+    gordura_braco_direito: toNumber(segmentar?.braco_direito?.gordura_kg),
+    gordura_braco_esquerdo: toNumber(segmentar?.braco_esquerdo?.gordura_kg),
+    gordura_tronco: toNumber(segmentar?.tronco?.gordura_kg),
+    gordura_perna_direita: toNumber(segmentar?.perna_direita?.gordura_kg),
+    gordura_perna_esquerda: toNumber(segmentar?.perna_esquerda?.gordura_kg),
+    braco_direito_20khz: toNumber(bioimp?.braco_direito?.["20khz"]),
+    braco_direito_100khz: toNumber(bioimp?.braco_direito?.["100khz"]),
+    braco_esquerdo_20khz: toNumber(bioimp?.braco_esquerdo?.["20khz"]),
+    braco_esquerdo_100khz: toNumber(bioimp?.braco_esquerdo?.["100khz"]),
+    tronco_20khz: toNumber(bioimp?.tronco?.["20khz"]),
+    tronco_100khz: toNumber(bioimp?.tronco?.["100khz"]),
+    perna_direita_20khz: toNumber(bioimp?.perna_direita?.["20khz"]),
+    perna_direita_100khz: toNumber(bioimp?.perna_direita?.["100khz"]),
+    perna_esquerda_20khz: toNumber(bioimp?.perna_esquerda?.["20khz"]),
+    perna_esquerda_100khz: toNumber(bioimp?.perna_esquerda?.["100khz"]),
+    braco: toNumber(postura?.circ_braco),
+    cintura: toNumber(postura?.circ_cintura),
+    quadril: toNumber(postura?.circ_quadril),
+  };
+};
+
+const safeJsonStringify = (value, space = 0) => {
+  const seen = new WeakSet();
+  const sanitize = (val, depth = 0) => {
+    if (val === null || val === undefined) return null;
+    const type = typeof val;
+    if (type === "string" || type === "number" || type === "boolean") return val;
+    if (type === "function") return "[function]";
+    if (typeof Element !== "undefined" && val instanceof Element) return `[element ${val.tagName?.toLowerCase?.() || "node"}]`;
+    if (depth > 5) return "[depth-limit]";
+    if (type === "object") {
+      if (seen.has(val)) return "[circular]";
+      seen.add(val);
+      if (Array.isArray(val)) return val.slice(0, 50).map((item) => sanitize(item, depth + 1));
+      const output = {};
+      Object.keys(val)
+        .slice(0, 50)
+        .forEach((key) => {
+          try {
+            output[key] = sanitize(val[key], depth + 1);
+          } catch {
+            output[key] = "[unserializable]";
+          }
+        });
+      return output;
+    }
+    return String(val);
+  };
+  try {
+    const safe = sanitize(value, 0);
+    return JSON.stringify(safe, null, space);
+  } catch (err) {
+    console.warn("[Coach] safeJsonStringify falhou:", err);
+    return "[unserializable]";
+  }
+};
+
+const safeStringify = (value) => {
+  if (value === null || value === undefined) return "";
+  if (typeof value === "string") return value;
+  if (typeof value !== "object") return String(value);
+  try {
+    return safeJsonStringify(value, 2);
+  } catch (err) {
+    console.warn("[Coach] falha ao serializar detalhes:", err);
+    return "[detalhes indisponíveis]";
+  }
+};
+
+export default function CoachPage() {
+  const { user } = useAuth();
+  const bottomRef = useRef(null);
+  const [messages, setMessages] = useState([{ role: "assistant", content: INITIAL_MESSAGE }]);
+  const [input, setInput] = useState("");
+  const [chatMode, setChatMode] = useState("default"); // default | recipe
+  const [usePersonalContext, setUsePersonalContext] = useState(true);
+  const [showMobileContext, setShowMobileContext] = useState(false);
+  const [attachOpen, setAttachOpen] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [recording, setRecording] = useState(false);
+  const [transcribing, setTranscribing] = useState(false);
+  const [analyzing, setAnalyzing] = useState(false);
+  const mediaRecorderRef = useRef(null);
+  const chunksRef = useRef([]);
+  const fileInputRef = useRef(null);
+  const photoInputRef = useRef(null);
+  const docInputRef = useRef(null);
+  const audioInputRef = useRef(null);
+  const analysisModeRef = useRef("default");
+  const [context, setContext] = useState({
+    objective: "Hipertrofia",
+    equipment: ["Barra", "Halteres", "Banco", "Máquinas", "Polia/Cabo"],
+    calories: 2600,
+    weight: 82,
+    bf: 24,
+    name: "Rafael",
+  });
+  const [latestEvolution, setLatestEvolution] = useState(null);
+  const [profileData, setProfileData] = useState(null);
+
+  const displayName = useMemo(() => user?.user_metadata?.nome ?? "Atleta", [user]);
+  const handlePrompt = (prompt) => setInput(prompt);
+  const toggleRecipeMode = () => setChatMode((prev) => (prev === "recipe" ? "default" : "recipe"));
+  const handlePersonalContextChange = async (event) => {
+    const nextValue = event.target.value === "personal";
+    setUsePersonalContext(nextValue);
+    if (!user?.id) return;
+    const { error } = await supabase
+      .from("perfis")
+      .upsert({ id: user.id, usar_contexto_pessoal: nextValue }, { onConflict: "id" });
+    if (error) {
+      console.error("[Coach] falha ao salvar preferencia de contexto:", error);
+      toast.error("Nao foi possivel salvar sua preferencia.");
+    }
+  };
+
+  React.useEffect(() => {
+    if (typeof window === "undefined") return;
+    const storageKey = getChatStorageKey(user?.id);
+    const raw = window.localStorage.getItem(storageKey);
+    if (!raw) return;
+    try {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed) && parsed.length > 0) {
+        setMessages(parsed);
+      }
+    } catch (error) {
+      console.warn("[Coach] falha ao restaurar conversa:", error);
+    }
+  }, [user?.id]);
+
+  React.useEffect(() => {
+    if (typeof window === "undefined") return;
+    const storageKey = getChatStorageKey(user?.id);
+    const sanitized = messages.map((message) => {
+      if (typeof message?.content === "string") return message;
+      if (message?.content?.type === "image") {
+        return {
+          ...message,
+          content: {
+            type: "image",
+            caption: message.content.caption || "Imagem enviada.",
+          },
+        };
+      }
+      return { ...message, content: safeStringify(message.content) };
+    });
+    try {
+      window.localStorage.setItem(storageKey, JSON.stringify(sanitized));
+    } catch (error) {
+      console.warn("[Coach] falha ao salvar conversa:", error);
+    }
+  }, [messages, user?.id]);
+
+  React.useEffect(() => {
+    let active = true;
+    async function loadEvolution() {
+      if (!user?.id) {
+        setLatestEvolution(null);
+        return;
+      }
+      try {
+        const evo = await fetchLatestEvolution(user.id);
+        if (active) setLatestEvolution(evo);
+      } catch (error) {
+        console.error("[Coach] falha ao carregar evolução:", error);
+        if (active) setLatestEvolution(null);
+      }
+    }
+    loadEvolution();
+    return () => {
+      active = false;
+    };
+  }, [user?.id]);
+
+  React.useEffect(() => {
+    let active = true;
+    async function loadProfile() {
+      if (!user?.id) {
+        setProfileData(null);
+        return;
+      }
+      const { data, error } = await supabase
+        .from("perfis")
+        .select(
+          "nome, idade, peso, altura, objetivo, nivel, sexo, data_nascimento, objetivo_peso_kg, meta_calorias, meta_proteina_g, meta_carbo_g, meta_gordura_g, dias_treino_semana, tempo_treino_min, saude_observacoes, restricoes_alimentares, alergias, medicacoes, unidade_medida, timezone, usar_contexto_pessoal",
+        )
+        .eq("id", user.id)
+        .maybeSingle();
+      if (!active) return;
+      if (error) {
+        console.error("[Coach] falha ao carregar perfil:", error);
+        return;
+      }
+      setProfileData(data ?? null);
+      if (typeof data?.usar_contexto_pessoal === "boolean") {
+        setUsePersonalContext(data.usar_contexto_pessoal);
+      }
+    }
+    loadProfile();
+    return () => {
+      active = false;
+    };
+  }, [user?.id]);
+
+  const toggleRecording = async () => {
+    if (recording) {
+      mediaRecorderRef.current?.stop();
+      return;
+    }
+    if (!navigator?.mediaDevices?.getUserMedia) {
+      toast.error("Seu navegador não permite gravar áudio.");
+      return;
+    }
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const recorder = new MediaRecorder(stream);
+      chunksRef.current = [];
+      recorder.ondataavailable = (event) => {
+        if (event.data?.size > 0) chunksRef.current.push(event.data);
+      };
+      recorder.onstop = async () => {
+        setRecording(false);
+        const blob = new Blob(chunksRef.current, { type: "audio/webm" });
+        if (!blob.size) {
+          stream.getTracks().forEach((t) => t.stop());
+          return;
+        }
+        await handleTranscribe(blob);
+        stream.getTracks().forEach((t) => t.stop());
+      };
+      mediaRecorderRef.current = recorder;
+      recorder.start();
+      setRecording(true);
+      toast.success("Gravando... clique novamente para finalizar.");
+    } catch (error) {
+      console.error("[Coach] falha ao iniciar gravação:", error);
+      toast.error("Não foi possível iniciar a gravação de áudio.");
+    }
+  };
+
+  const handleTranscribe = async (blob) => {
+    setTranscribing(true);
+    try {
+      const base64Audio = await blobToBase64(blob);
+      const response = await fetch(`${API_BASE}/api/transcribe`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: safeJsonStringify({ audio: base64Audio, mimeType: blob.type }),
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data?.error ?? "Transcrição falhou.");
+      const text = (data?.text ?? "").trim();
+      if (!text) {
+        toast.error("Não foi possível entender o áudio.");
+        return;
+      }
+      setInput(text);
+      await sendMessage(null, text);
+    } catch (error) {
+      console.error("[Coach] erro na transcrição:", error);
+      toast.error(error.message || "Não foi possível transcrever o áudio.");
+    } finally {
+      setTranscribing(false);
+    }
+  };
+
+  const blobToBase64 = (blob) =>
+    new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onloadend = () => {
+        const result = reader.result;
+        if (typeof result === "string") {
+          const base64 = result.split(",")[1];
+          resolve(base64);
+        } else {
+          reject(new Error("Falha ao ler arquivo."));
+        }
+      };
+      reader.onerror = reject;
+      reader.readAsDataURL(blob);
+    });
+
+  const setAnalysisMode = (mode = "default") => {
+    analysisModeRef.current = mode;
+  };
+  const normalizeMode = (maybeEventOrMode, fallback = "default") => {
+    if (maybeEventOrMode && typeof maybeEventOrMode === "object" && "preventDefault" in maybeEventOrMode) {
+      maybeEventOrMode.preventDefault?.();
+      return fallback;
+    }
+    return maybeEventOrMode || fallback;
+  };
+  const handleSelectFile = (mode = "default") => {
+    const resolvedMode = normalizeMode(mode, "default");
+    setAnalysisMode(resolvedMode);
+    fileInputRef.current?.click();
+  };
+  const handleSelectPhoto = (mode = "default") => {
+    const resolvedMode = normalizeMode(mode, "default");
+    setAnalysisMode(resolvedMode);
+    photoInputRef.current?.click();
+  };
+  const handleSelectDoc = () => {
+    setAnalysisMode("default");
+    docInputRef.current?.click();
+  };
+  const handleSelectAudio = () => {
+    setAnalysisMode("default");
+    audioInputRef.current?.click();
+  };
+  const handleSelectMealPhoto = () => handleSelectPhoto("meal");
+  const handleSelectMealGallery = () => handleSelectFile("meal");
+  const handleSelectBioReport = () => handleSelectFile("bio");
+
+  const handleFileChange = async (event) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    event.target.value = "";
+    const mode = analysisModeRef.current || "default";
+    analysisModeRef.current = "default";
+    await analyzeFile(file, mode);
+  };
+
+  const handlePhotoChange = async (event) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    event.target.value = "";
+    const mode = analysisModeRef.current || "default";
+    analysisModeRef.current = "default";
+    await analyzeFile(file, mode);
+  };
+
+  const handleDocChange = async (event) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    event.target.value = "";
+    const mode = analysisModeRef.current || "default";
+    analysisModeRef.current = "default";
+    await analyzeFile(file, mode);
+  };
+
+  const handleAudioChange = async (event) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    event.target.value = "";
+    const mode = analysisModeRef.current || "default";
+    analysisModeRef.current = "default";
+    await analyzeFile(file, mode);
+  };
+
+  const parseJsonSafe = async (response, label) => {
+    const rawText = await response.text();
+    try {
+      const data = JSON.parse(rawText);
+      return { data, rawText };
+    } catch (err) {
+      console.error(`[Coach] ${label} JSON inválido:`, err, rawText?.slice(0, 500));
+      return { data: null, rawText };
+    }
+  };
+
+  const analyzeFile = async (file, mode = "default") => {
+    if (!file) return;
+    // se não vier modo e for imagem, assumimos meal como padrão para fotos
+    let effectiveMode = mode || (file.type?.startsWith("image/") ? "meal" : "default");
+    const isImage = /^image\//i.test(file.type);
+    if (isImage && effectiveMode === "default") {
+      effectiveMode = "meal";
+    }
+    console.log("[Coach] analyzeFile start", { fileName: file.name, type: file.type, mode, effectiveMode });
+    const MAX_SIZE_BYTES = 10 * 1024 * 1024;
+    if (file.size > MAX_SIZE_BYTES) {
+      toast.error("Arquivo muito grande (limite 10MB).");
+      return;
+    }
+    const isPdf = file.type.toLowerCase() === "application/pdf";
+    if (!isImage && !isPdf) {
+      toast.error("Tipo não suportado. Envie imagem ou PDF.");
+      return;
+    }
+
+    setAnalyzing(true);
+    const intentLabel = effectiveMode === "meal" ? "Refeição por imagem" : "Arquivo";
+    const caption = `Analisar ${intentLabel}: ${file.name}`;
+    if (isImage) {
+      const previewUrl = URL.createObjectURL(file);
+      setMessages((current) => [
+        ...current,
+        { role: "user", content: { type: "image", caption, src: previewUrl } },
+      ]);
+    } else {
+      setMessages((current) => [...current, { role: "user", content: caption }]);
+    }
+
+    try {
+      let interpretData = null;
+
+      if (isPdf) {
+        // 1) extrai texto via pdf-parse
+        const base64 = await blobToBase64(file);
+        const extractRes = await fetch(`${API_BASE}/api/extractPdfText`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: safeJsonStringify({ base64 }),
+        });
+        const { data: extractData, rawText: extractRaw } = await parseJsonSafe(extractRes, "extractPdfText");
+        if (!extractData) {
+          throw new Error("Falha ao ler resposta da extração (JSON inválido).");
+        }
+        if (!extractRes.ok) {
+          const reason =
+            (typeof extractData?.error === "string" && extractData.error) ||
+            (typeof extractData?.details === "string" && extractData.details) ||
+            extractRaw?.slice(0, 200) ||
+            "Falha ao extrair texto do PDF.";
+          throw new Error(reason);
+        }
+        const fullText = extractData?.texto || "";
+        console.log("[Coach] pdf text length:", fullText.length);
+        console.log("[Coach] pdf text preview:", fullText.slice(0, 500));
+        const truncatedText = fullText.length > 150000 ? fullText.slice(0, 150000) : fullText;
+
+        // 2) interpreta o texto extraído
+        const interpretRes = await fetch(`${API_BASE}/api/interpretText`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: safeJsonStringify({
+            text: truncatedText,
+            fileName: file.name,
+            purpose: mode,
+          }),
+        });
+        const { data: interpretJson, rawText: interpretRaw } = await parseJsonSafe(interpretRes, "interpretText");
+        interpretData = interpretJson;
+        if (!interpretJson) {
+          throw new Error("Falha ao interpretar resposta (JSON inválido).");
+        }
+        if (!interpretRes.ok) {
+          const reason =
+            (typeof interpretJson?.error === "string" && interpretJson.error) ||
+            (typeof interpretJson?.details === "string" && interpretJson.details) ||
+            interpretRaw?.slice(0, 200) ||
+            "Falha ao interpretar texto extraído.";
+          throw new Error(reason);
+        }
+      } else {
+        // imagem → visão (envia base64 direto)
+        const base64Image = await blobToBase64(file);
+        const visionPayload = {
+          base64: base64Image,
+          mimeType: file.type,
+          fileName: file.name,
+          model: selectModel({ hasImage: true }),
+          purpose: effectiveMode,
+        };
+        console.log("[Coach] calling /api/vision", visionPayload);
+        const res = await fetch(`${API_BASE}/api/vision`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: safeJsonStringify(visionPayload),
+        });
+        const { data: visionData, rawText: visionRaw } = await parseJsonSafe(res, "vision");
+        interpretData = visionData;
+        if (!visionData) {
+          throw new Error("Falha ao interpretar resposta (JSON inválido).");
+        }
+        if (!res.ok) {
+          const reason =
+            (typeof visionData?.error === "string" && visionData.error) ||
+            (typeof visionData?.details === "string" && visionData.details) ||
+            (visionData?.details ? safeStringify(visionData.details) : "") ||
+            visionRaw?.slice(0, 200) ||
+            "Falha ao interpretar arquivo.";
+          throw new Error(reason);
+        }
+      }
+
+      // parse json
+      let parsedJson = interpretData?.json;
+      if (!parsedJson && typeof interpretData?.raw === "string") {
+        try {
+          parsedJson = JSON.parse(interpretData.raw);
+        } catch {
+          parsedJson = null;
+        }
+      }
+
+      const summary = interpretData?.raw || (mode === "meal" ? "Refeição analisada." : "Analise concluida.");
+      const extractedPreview = interpretData?.texto
+        ? `\n\n[Preview texto extraido]: ${(interpretData.texto || "").slice(0, 500)}`
+        : interpretData?.extractedTextPreview
+          ? `\n\n[Preview texto extraido]: ${interpretData.extractedTextPreview.slice(0, 500)}`
+          : "";
+
+      setMessages((current) => [
+        ...current,
+        { role: "assistant", content: `Prévia: ${summary?.slice(0, 1000) || "Analise concluida."}${extractedPreview}` },
+      ]);
+
+      if (!parsedJson) {
+        toast.error("Analise concluida, mas nao veio JSON estruturado para salvar.");
+        return;
+      }
+
+      const isMealPayload =
+        effectiveMode === "meal" ||
+        Array.isArray(parsedJson?.itens) ||
+        Array.isArray(parsedJson?.items) ||
+        parsedJson?.valores_totais !== undefined ||
+        parsedJson?.total_calorias !== undefined ||
+        parsedJson?.total_proteina_g !== undefined ||
+        parsedJson?.total_carboidrato_g !== undefined ||
+        parsedJson?.total_gordura_g !== undefined ||
+        parsedJson?.totais !== undefined ||
+        parsedJson?.total !== undefined;
+      console.log("[Coach] parsedJson", parsedJson, "isMealPayload", isMealPayload, "isImage", isImage, "mode", mode, "effectiveMode", effectiveMode);
+
+      if (effectiveMode === "bio") {
+        if (!user?.id) {
+          toast.error("Entre para salvar a evolucao.");
+          return;
+        }
+        const payload = buildEvolutionPayload(parsedJson || {});
+        try {
+          await insertEvolutionReport({ usuarioId: user.id, fields: payload });
+          toast.success("Relatorio registrado na evolucao!");
+          setMessages((current) => [
+            ...current,
+            {
+              role: "assistant",
+              content: "Relatorio de bioimpedancia salvo na evolucao. Se precisar, posso ajustar ou complementar.",
+            },
+          ]);
+        } catch (error) {
+          console.error("[Coach] falha ao salvar evolucao:", error);
+          toast.error(error?.message ?? "Nao foi possivel salvar a evolucao.");
+        }
+        return;
+      }
+
+      if (isMealPayload) {
+        console.log("[Coach] meal payload detectado", parsedJson);
+        const items = parsedJson?.itens || parsedJson?.items || [];
+        const totals =
+          parsedJson?.valores_totais ||
+          parsedJson?.totais ||
+          parsedJson?.total || {
+            calorias_kcal: parsedJson?.total_calorias,
+            proteinas_g: parsedJson?.total_proteina_g,
+            carboidratos_g: parsedJson?.total_carboidrato_g,
+            gorduras_g: parsedJson?.total_gordura_g,
+            calorias: parsedJson?.total?.calorias,
+            proteina: parsedJson?.total?.proteina,
+            carboidrato: parsedJson?.total?.carboidrato,
+            gordura: parsedJson?.total?.gordura,
+          };
+
+        const sumFromItems = (key, aliases = []) =>
+          items.reduce((sum, item) => {
+            const candidates = [key, ...aliases];
+            for (const c of candidates) {
+              const val =
+                Number(item?.[c]) ||
+                Number(item?.[`total_${c}`]) ||
+                Number(item?.[`macros_${c}`]) ||
+                Number(item?.[`macros_${c}_g`]);
+              if (Number.isFinite(val)) return sum + val;
+            }
+            return sum;
+          }, 0);
+
+        const totalCalorias = Number(
+          totals?.calorias_kcal ?? totals?.calorias ?? parsedJson?.total_calorias ?? parsedJson?.total?.calorias,
+        );
+        const totalProteina = Number(
+          totals?.proteinas ?? totals?.proteinas_g ?? totals?.proteina_g ?? totals?.proteina ?? parsedJson?.total_proteina_g ?? parsedJson?.total?.proteina,
+        );
+        const totalCarbo = Number(
+          totals?.carboidratos ?? totals?.carboidratos_g ?? totals?.carboidrato_g ?? totals?.carboidrato ?? parsedJson?.total_carboidrato_g ?? parsedJson?.total?.carboidrato,
+        );
+        const totalGord = Number(
+          totals?.gorduras ?? totals?.gorduras_g ?? totals?.gordura_g ?? totals?.gordura ?? parsedJson?.total_gordura_g ?? parsedJson?.total?.gordura,
+        );
+
+        const resolvedTotals = {
+          calorias: Number.isFinite(totalCalorias) ? totalCalorias : sumFromItems("calorias", ["calories", "kcal"]),
+          proteina: Number.isFinite(totalProteina) ? totalProteina : sumFromItems("proteina", ["proteina_g", "protein", "proteinas", "proteinas_g"]),
+          carboidrato: Number.isFinite(totalCarbo) ? totalCarbo : sumFromItems("carboidrato", ["carboidrato_g", "carbo", "carboidratos", "carboidratos_g", "carbs"]),
+          gordura: Number.isFinite(totalGord) ? totalGord : sumFromItems("gordura", ["gordura_g", "gorduras", "gorduras_g", "fat"]),
+        };
+
+        const filledTotals = {
+          calorias: Number.isFinite(resolvedTotals.calorias) ? resolvedTotals.calorias : 0,
+          proteina: Number.isFinite(resolvedTotals.proteina) ? resolvedTotals.proteina : 0,
+          carboidrato: Number.isFinite(resolvedTotals.carboidrato) ? resolvedTotals.carboidrato : 0,
+          gordura: Number.isFinite(resolvedTotals.gordura) ? resolvedTotals.gordura : 0,
+        };
+        console.log("[Coach] meal resolved totals", filledTotals);
+
+        const macrosLine = `Macros estimados: Proteínas ${filledTotals.proteina || "?"} g | Carboidratos ${filledTotals.carboidrato || "?"} g | Gorduras ${filledTotals.gordura || "?"} g | Calorias ${filledTotals.calorias || "?"} kcal`;
+        setMessages((current) => [...current, { role: "assistant", content: macrosLine }]);
+
+        if (user?.id) {
+          try {
+            // salva apenas em refeicoes_consumidas
+            console.log("[Coach] salvando refeicao em refeicoes_consumidas");
+            await insertConsumedMeal({
+              usuarioId: user.id,
+              nome:
+                parsedJson?.titulo ||
+                parsedJson?.nome ||
+                parsedJson?.summary ||
+                file.name ||
+                "Refeição analisada",
+              tipo: parsedJson?.tipo ?? null,
+              data: new Date(),
+              totalCalorias: filledTotals.calorias,
+              totalProteina: filledTotals.proteina,
+              totalCarboidratos: filledTotals.carboidrato,
+              totalGorduras: filledTotals.gordura,
+            });
+
+            toast.success("Refeição analisada e salva.");
+          } catch (persistMealError) {
+            console.error("[Coach] falha ao salvar refeição:", persistMealError);
+            toast.error("Macros analisados, mas não foi possível salvar a refeição.");
+          }
+        } else {
+          toast.success("Refeição analisada. Faça login para salvar no histórico.");
+        }
+        return;
+      }
+
+      // Desabilitado salvar em evolução a partir deste fluxo (apenas refeições/imagens); avaliações em PDF podem ser reabilitadas se necessário.
+      const shouldPersistAssessment = false;
+      if (!shouldPersistAssessment) return;
+
+      if (!user?.id) {
+        toast.error("Faça login para salvar os resultados em evolução.");
+        return;
+      }
+
+      try {
+        console.log("[Coach] salvando avaliacao via API/saveAssessment", parsedJson);
+        const persistRes = await fetch(`${API_BASE}/api/saveAssessment`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: safeJsonStringify({
+            usuarioId: user.id,
+            dados: parsedJson,
+            fileName: file.name,
+          }),
+        });
+        const persistData = await persistRes.json();
+        console.log("[Coach] resposta saveAssessment", persistRes.status, persistData);
+        if (!persistRes.ok) {
+          const reason =
+            (typeof persistData?.error === "string" && persistData.error) ||
+            (typeof persistData?.details === "string" && persistData.details) ||
+            (persistData ? safeStringify(persistData) : "Falha ao salvar.");
+          throw new Error(reason);
+        }
+        toast.success(`Evolução salva (id ${persistData?.evolucaoId || "?"}).`);
+      } catch (persistError) {
+        console.error("[Coach] erro ao salvar avaliacao:", persistError);
+        const reason =
+          persistError?.message ||
+          persistError?.error?.message ||
+          persistError?.error ||
+          "Nao foi possivel salvar no historico.";
+        toast.error(`Analise concluida, mas falhou ao salvar: ${reason}`);
+      }
+    } catch (error) {
+      console.error("[Coach] erro ao analisar arquivo:", error);
+      toast.error(error.message || "Nao foi possivel analisar o arquivo.");
+      setMessages((current) => [...current, { role: "assistant", content: "Não consegui analisar este arquivo agora." }]);
+    } finally {
+      setAnalyzing(false);
+      bottomRef.current?.scrollIntoView({ behavior: "smooth" });
+    }
+  };
+
+  const sendMessage = async (event, overrideText = null) => {
+    event?.preventDefault();
+    const text = typeof overrideText === "string" ? overrideText : input;
+    const trimmed = text.trim();
+    if (!trimmed || loading) return;
+
+    const isRecipeMode = chatMode === "recipe" || /^\/receita\b/i.test(trimmed);
+    const userContent = isRecipeMode ? trimmed.replace(/^\/receita\b[:\s]*/i, "").trim() || trimmed : trimmed;
+
+    const nextMessages = [...messages, { role: "user", content: userContent }];
+    const sanitizedMessages = nextMessages.map(({ role, content }) => {
+      if (typeof content === "string") return { role, content };
+      if (content?.type === "image") {
+        return { role, content: content.caption || "Imagem enviada." };
+      }
+      return {
+        role,
+        // garante que não iremos serializar elementos React/DOM que causam erro de JSON circular
+        content: safeStringify(content),
+      };
+    });
+    setMessages(sanitizedMessages);
+    if (!overrideText) setInput("");
+    setLoading(true);
+    bottomRef.current?.scrollIntoView({ behavior: "smooth" });
+
+    try {
+      const response = await fetch(`${API_BASE}/api/chat`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: safeJsonStringify({
+          systemPrompt: isRecipeMode
+            ? buildRecipePrompt()
+            : buildSystemPrompt(context, displayName, latestEvolution, profileData, usePersonalContext),
+          messages: sanitizedMessages,
+          userId: user?.id ?? null,
+          model: selectModel({ isLong: trimmed.length > 800 }),
+        }),
+      });
+      const raw = await response.text();
+      let data = null;
+      try {
+        data = raw ? JSON.parse(raw) : null;
+      } catch (err) {
+        console.error("[Coach] resposta não é JSON válido:", raw?.slice(0, 400));
+      }
+      if (!response.ok) {
+        const reason = data?.error || raw || "Falha no coach.";
+        throw new Error(reason);
+      }
+      const reply = data?.reply ?? raw ?? "Sem resposta no momento.";
+      setMessages((current) => [...current, { role: "assistant", content: reply }]);
+
+      if (isRecipeMode) {
+        const recipeJson = extractJsonFromText(reply);
+        if (!recipeJson) {
+          toast.error("Não consegui estruturar a receita em JSON.");
+          return;
+        }
+        if (!user?.id) {
+          toast.error("Faça login para salvar a receita.");
+          return;
+        }
+        try {
+          await salvarRefeicao({
+            planoId: null,
+            titulo: recipeJson.titulo || recipeJson.nome || "Receita",
+            descricao: recipeJson.descricao || null,
+            valores: recipeJson.valores_totais || recipeJson.total || {
+              calorias: recipeJson.calorias,
+              proteinas: recipeJson.proteinas,
+              carboidratos: recipeJson.carboidratos,
+              gorduras: recipeJson.gorduras,
+            },
+          });
+          toast.success("Receita salva em refeições.");
+        } catch (err) {
+          console.error("[Coach] falha ao salvar receita:", err);
+          toast.error("Não foi possível salvar a receita.");
+        }
+        return;
+      }
+
+      if (!isRecipeMode) {
+        const mealTotals = extractMealTotalsFromText(reply);
+        if (mealTotals) {
+          if (!user?.id) {
+            toast.error("Faça login para registrar a refeição.");
+          } else {
+            try {
+              await insertConsumedMeal({
+                usuarioId: user.id,
+                nome: inferMealNameFromText(trimmed),
+                data: new Date(),
+                horario: new Date().toTimeString().slice(0, 8),
+                tipo: null,
+                totalCalorias: mealTotals.calorias,
+                totalProteina: mealTotals.proteina,
+                totalCarboidratos: mealTotals.carboidrato,
+                totalGorduras: mealTotals.gordura,
+              });
+              toast.success("Refeição registrada no diário.");
+            } catch (persistError) {
+              console.error("[Coach] falha ao salvar refeição do chat:", persistError);
+              toast.error("Macros lidos, mas não foi possível salvar a refeição.");
+            }
+          }
+        }
+      }
+    } catch (error) {
+      console.error("[Coach] erro ao enviar mensagem:", error);
+      toast.error(error.message);
+      setMessages((current) => [...current, { role: "assistant", content: "Ainda não consegui responder. Tente novamente." }]);
+    } finally {
+      setLoading(false);
+      bottomRef.current?.scrollIntoView({ behavior: "smooth" });
+    }
+  };
+
+  return (
+    <div className="grid h-full min-h-0 w-full grid-cols-1 gap-4 px-3 lg:grid-cols-[360px,1fr] lg:gap-6 lg:px-6">
+      <div className="lg:col-span-2">
+        <UserSummary context={context} />
+      </div>
+      {/*
+        Mobile: contexto rápido em collapse no final. Desktop: painel lateral fixo.
+      */}
+      <aside className="hidden space-y-6 rounded-[32px] border border-white/10 bg-white/80 p-6 shadow-xl dark:border-slate-800 dark:bg-slate-900/70 lg:block">
+        <ContextPanel context={context} setContext={setContext} handlePrompt={handlePrompt} />
+      </aside>
+
+      <section className="flex flex-1 min-h-0 flex-col gap-4">
+        <div className="flex h-[36vh] min-h-[36vh] max-h-[36vh] flex-col gap-4 overflow-y-auto rounded-[24px] border border-white/40 bg-white/80 p-4 dark:border-slate-800 dark:bg-slate-900/60 lg:h-[520px] lg:min-h-[520px] lg:max-h-[520px] lg:max-w-full">
+          {messages.map((message, index) => (
+            <MessageBubble key={`${message.role}-${index}`} role={message.role} content={message.content} />
+          ))}
+          {loading ? <TypingIndicator /> : null}
+          <span ref={bottomRef} aria-hidden />
+        </div>
+
+        <form className="mt-6 space-y-3" onSubmit={sendMessage}>
+          <div className="flex items-center gap-3">
+            <div className="relative flex flex-1 items-center gap-2 rounded-3xl border border-white/60 bg-white px-3 py-2 shadow-sm ring-2 ring-transparent focus-within:border-[#32C5FF] focus-within:ring-[#32C5FF]/20 dark:border-slate-800 dark:bg-slate-900">
+              <button
+                type="button"
+                onClick={() => setAttachOpen((prev) => !prev)}
+                disabled={loading || analyzing}
+                className="flex h-10 w-10 items-center justify-center rounded-2xl text-[#0f1f3c] transition hover:bg-[#f0f4ff] dark:text-white dark:hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-60"
+                aria-label="Abrir anexos"
+                aria-expanded={attachOpen}
+              >
+                <ClipIcon />
+              </button>
+              <textarea
+                value={input}
+                onChange={(event) => setInput(event.target.value)}
+                placeholder="Escreva uma mensagem..."
+                rows={2}
+                className="min-h-[56px] max-h-[240px] w-full flex-1 resize-none bg-transparent px-1 py-2 text-sm outline-none focus:outline-none dark:text-white lg:min-h-[120px]"
+              />
+              <button
+                type="button"
+              onClick={handleSelectPhoto}
+              disabled={loading || analyzing}
+              className="flex h-10 w-10 items-center justify-center rounded-2xl text-[#0f1f3c] transition hover:bg-[#f0f4ff] dark:text-white dark:hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-60"
+              aria-label="Abrir câmera"
+            >
+                <CameraIcon />
+              </button>
+              <ClipMenu
+                open={attachOpen}
+                onClose={() => setAttachOpen(false)}
+                onSelectGallery={() => handleSelectFile("default")}
+                onSelectCamera={() => handleSelectPhoto("default")}
+                onSelectDocument={handleSelectDoc}
+                onSelectAudio={handleSelectAudio}
+                onSelectBio={handleSelectBioReport}
+              />
+            </div>
+
+            <div className="flex items-center gap-2">
+              <FloatingActionButton
+                hasText={Boolean(input.trim())}
+                loading={loading}
+                transcribing={transcribing}
+                recording={recording}
+                analyzing={analyzing}
+                onSend={sendMessage}
+                onRecord={toggleRecording}
+              />
+            </div>
+          </div>
+
+          <div className="flex flex-wrap items-center justify-between gap-3 text-xs text-[rgb(var(--text-secondary))]">
+            <p>Enviaremos o contexto do {displayName} para respostas mais precisas.</p>
+            <div className="flex flex-wrap items-center gap-2">
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept="image/*,.pdf"
+                onChange={handleFileChange}
+                className="hidden"
+              />
+              <input
+                ref={photoInputRef}
+                type="file"
+                accept="image/*"
+                capture="environment"
+                onChange={handlePhotoChange}
+                className="hidden"
+              />
+              <input
+                ref={docInputRef}
+                type="file"
+                accept=".pdf,application/pdf"
+                onChange={handleDocChange}
+                className="hidden"
+              />
+              <input
+                ref={audioInputRef}
+                type="file"
+                accept="audio/*"
+                onChange={handleAudioChange}
+                className="hidden"
+              />
+            </div>
+          </div>
+        </form>
+      </section>
+
+      <div className="lg:col-span-2">
+        <div className="rounded-[24px] border border-white/10 bg-white/80 p-3 shadow-md dark:border-slate-800 dark:bg-slate-900/70">
+          <label className="flex flex-wrap items-center gap-3 text-sm text-[rgb(var(--text-secondary))]">
+            <span className="font-semibold text-[rgb(var(--text-primary))]">Basear fichas e dietas nos dados pessoais</span>
+            <select
+              value={usePersonalContext ? "personal" : "free"}
+              onChange={handlePersonalContextChange}
+              className="rounded-2xl border border-white/60 bg-white px-3 py-2 text-sm outline-none focus:border-[#32C5FF] dark:border-slate-800 dark:bg-slate-900 dark:text-white"
+            >
+              <option value="personal">Sim</option>
+              <option value="free">Nao</option>
+            </select>
+          </label>
+        </div>
+      </div>
+
+      <div className="lg:hidden">
+        <div className="rounded-[24px] border border-white/10 bg-white/80 p-4 shadow-md dark:border-slate-800 dark:bg-slate-900/70">
+          <button
+            type="button"
+            onClick={() => setShowMobileContext((prev) => !prev)}
+            className="flex w-full items-center justify-between rounded-2xl bg-white/70 px-4 py-3 text-left text-sm font-semibold text-[rgb(var(--text-primary))] shadow-sm transition hover:bg-white dark:bg-slate-800 dark:text-white"
+          >
+            <span>Contexto rápido</span>
+            <span className="text-xs text-[rgb(var(--text-secondary))]">{showMobileContext ? "ocultar" : "mostrar"}</span>
+          </button>
+          {showMobileContext ? (
+            <div className="mt-3 space-y-4">
+              <ContextPanel context={context} setContext={setContext} handlePrompt={handlePrompt} />
+            </div>
+          ) : null}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function UserSummary({ context }) {
+  return (
+    <div className="text-[13px] font-semibold text-[#9AB4C8] text-opacity-70">
+      <p className="flex flex-wrap items-center gap-3">
+        <span>👤 {context.name || "Atleta"}</span>
+        <span>⚖️ {context.weight ?? 0} kg</span>
+        <span>🔥 {context.bf ?? 0}% BF</span>
+        <span>🎯 {context.objective}</span>
+        <span>🍽️ {context.calories} kcal</span>
+      </p>
+      <div className="h-1" />
+    </div>
+  );
+}
+function ContextPanel({ context, setContext, handlePrompt }) {
+  return (
+    <>
+      <div>
+        <p className="text-xs uppercase tracking-[0.3em] text-[rgb(var(--text-subtle))]">Contexto rápido</p>
+        <h2 className="text-xl font-semibold text-[rgb(var(--text-primary))]">Parâmetros do coach</h2>
+        <p className="text-sm text-[rgb(var(--text-secondary))]">Ajuste algumas variáveis para guiar as respostas personalizadas.</p>
+      </div>
+      <div className="space-y-4 text-sm">
+        <label className="block space-y-1">
+          <span className="text-[rgb(var(--text-secondary))]">Objetivo</span>
+          <select
+            value={context.objective}
+            onChange={(event) => setContext((prev) => ({ ...prev, objective: event.target.value }))}
+            className="w-full rounded-2xl border border-white/60 bg-white px-3 py-2 text-sm outline-none focus:border-[#32C5FF] dark:border-slate-800 dark:bg-slate-900 dark:text-white"
+          >
+            <option>Hipertrofia</option>
+            <option>Emagrecimento</option>
+            <option>Saúde geral</option>
+          </select>
+        </label>
+        <label className="block space-y-1">
+          <span className="text-[rgb(var(--text-secondary))]">Calorias alvo</span>
+          <input
+            type="number"
+            value={context.calories}
+            onChange={(event) => setContext((prev) => ({ ...prev, calories: Number(event.target.value) }))}
+            className="w-full rounded-2xl border border-white/60 bg-white px-3 py-2 text-sm outline-none focus:border-[#32C5FF] dark:border-slate-800 dark:bg-slate-900 dark:text-white"
+          />
+        </label>
+        <label className="block space-y-1">
+          <span className="text-[rgb(var(--text-secondary))]">Equipamentos disponíveis</span>
+          <input
+            value={context.equipment.join(", ")}
+            onChange={(event) =>
+              setContext((prev) => ({ ...prev, equipment: event.target.value.split(",").map((item) => item.trim()) }))
+            }
+            className="w-full rounded-2xl border border-white/60 bg-white px-3 py-2 text-sm outline-none focus:border-[#32C5FF] dark:border-slate-800 dark:bg-slate-900 dark:text-white"
+          />
+          <p className="text-xs text-[rgb(var(--text-subtle))]">Separe por vírgulas.</p>
+        </label>
+      </div>
+
+      <div>
+        <p className="text-xs uppercase tracking-[0.3em] text-[rgb(var(--text-subtle))]">Sugestões</p>
+        <div className="mt-3 space-y-3">
+          {SAMPLE_COACH_PROMPTS.map((prompt) => (
+            <button
+              key={prompt}
+              type="button"
+              onClick={() => handlePrompt(prompt)}
+              className="w-full rounded-2xl border border-white/40 px-4 py-3 text-left text-sm font-medium text-[rgb(var(--text-secondary))] transition hover:border-[#32C5FF] hover:text-[#32C5FF]"
+            >
+              {prompt}
+            </button>
+          ))}
+        </div>
+      </div>
+    </>
+  );
+}
+
+function MessageBubble({ role, content }) {
+  const isCoach = role === "assistant";
+  return (
+    <div className={`flex ${isCoach ? "justify-start" : "justify-end"}`}>
+      <div
+        className={`max-w-[80%] rounded-3xl px-4 py-3 text-sm shadow-sm ${
+          isCoach
+            ? "bg-white text-[rgb(var(--text-primary))] dark:bg-slate-800 dark:text-white"
+            : "bg-[#0f1f3c] text-white dark:bg-[#32C5FF]/20"
+        }`}
+      >
+        <MessageContent content={content} />
+      </div>
+    </div>
+  );
+}
+
+function MessageContent({ content }) {
+  if (!content) return null;
+  if (typeof content !== "string") {
+    if (content?.type === "image") {
+      return (
+        <div className="space-y-2">
+          {content.caption ? <p className="leading-relaxed">{content.caption}</p> : null}
+          {content.src ? (
+            <img
+              src={content.src}
+              alt={content.caption || "Pré-visualização da imagem"}
+              className="w-full max-w-[320px] rounded-2xl border border-white/40 object-cover shadow-sm dark:border-slate-700"
+            />
+          ) : null}
+        </div>
+      );
+    }
+    return <p className="leading-relaxed">{safeStringify(content)}</p>;
+  }
+  const blocks = content.split(/\n{2,}/).filter(Boolean);
+
+  return (
+    <div className="space-y-2">
+      {blocks.map((block, blockIndex) => {
+        const lines = block.split("\n").filter(Boolean);
+        const isOrderedList = lines.every((line) => /^\d+[\.\)]\s+/.test(line.trim()));
+        const isBulletList = lines.every((line) => /^[-•]\s+/.test(line.trim()));
+
+        if (isOrderedList) {
+          return (
+            <ol key={`block-${blockIndex}`} className="ml-5 list-decimal space-y-1">
+              {lines.map((line, lineIndex) => (
+                <li key={`ol-${blockIndex}-${lineIndex}`} className="leading-relaxed">
+                  {line.replace(/^\d+[\.\)]\s+/, "")}
+                </li>
+              ))}
+            </ol>
+          );
+        }
+
+        if (isBulletList) {
+          return (
+            <ul key={`block-${blockIndex}`} className="ml-4 list-disc space-y-1">
+              {lines.map((line, lineIndex) => (
+                <li key={`ul-${blockIndex}-${lineIndex}`} className="leading-relaxed">
+                  {line.replace(/^[-•]\s+/, "")}
+                </li>
+              ))}
+            </ul>
+          );
+        }
+
+        // default paragraph
+        return (
+          <p key={`p-${blockIndex}`} className="leading-relaxed whitespace-pre-wrap">
+            {block}
+          </p>
+        );
+      })}
+    </div>
+  );
+}
+
+function TypingIndicator() {
+  return (
+    <div className="flex justify-start">
+      <div className="flex items-center gap-1 rounded-full bg-white px-4 py-2 text-xs text-gray-500 shadow dark:bg-slate-800 dark:text-gray-100">
+        <span className="h-2 w-2 animate-bounce rounded-full bg-[#32C5FF]" />
+        <span className="h-2 w-2 animate-bounce rounded-full bg-[#32C5FF]" style={{ animationDelay: "120ms" }} />
+        <span className="h-2 w-2 animate-bounce rounded-full bg-[#32C5FF]" style={{ animationDelay: "240ms" }} />
+      </div>
+    </div>
+  );
+}
+
+function FloatingActionButton({ hasText, loading, recording, transcribing, analyzing, onSend, onRecord }) {
+  const disabled = loading || analyzing || (transcribing && !recording);
+  const isSending = hasText;
+  const showMic = !isSending;
+  const buttonStyle = isSending ? "bg-[#0f1f3c]" : recording ? "bg-rose-600" : "bg-[#32C5FF]";
+
+  return (
+    <button
+      type={isSending ? "submit" : "button"}
+      onClick={isSending ? undefined : onRecord}
+      disabled={disabled}
+      className={`inline-flex h-12 w-12 items-center justify-center rounded-full text-white shadow-lg shadow-slate-900/30 transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-60 ${buttonStyle}`}
+      aria-label={isSending ? "Enviar mensagem" : recording ? "Parar e transcrever" : "Gravar áudio"}
+    >
+      {isSending ? <SendIcon /> : <MicIcon active={recording} />}
+    </button>
+  );
+}
+
+function SendIcon() {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" className="h-5 w-5">
+      <path
+        d="M4 11.5l15-6-6 15-2.5-6.5L4 11.5z"
+        stroke="currentColor"
+        strokeWidth="1.7"
+        strokeLinejoin="round"
+      />
+      <path d="M13.5 10.5l-3 3" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" />
+    </svg>
+  );
+}
+
+function MicIcon({ active = false }) {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" className="h-5 w-5">
+      <rect x="9" y="4" width="6" height="12" rx="3" stroke="currentColor" strokeWidth="1.7" />
+      <path
+        d="M6 11v1a6 6 0 006 6 6 6 0 006-6v-1"
+        stroke="currentColor"
+        strokeWidth="1.7"
+        strokeLinecap="round"
+        className={active ? "animate-pulse" : ""}
+      />
+      <path d="M12 20v2" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" />
+    </svg>
+  );
+}
+
+function ClipMenu({ open, onClose, onSelectGallery, onSelectCamera, onSelectDocument, onSelectAudio, onSelectBio }) {
+  if (!open) return null;
+  const items = [
+    { label: "Galeria", icon: <GalleryIcon />, action: onSelectGallery },
+    { label: "Câmera", icon: <CameraFilledIcon />, action: onSelectCamera },
+    { label: "Documento", icon: <DocIcon />, action: onSelectDocument },
+    { label: "Bioimpedância", icon: <DocIcon />, action: onSelectBio },
+    { label: "Áudio", icon: <AudioIcon />, action: onSelectAudio },
+  ];
+  return (
+    <div className="clip-menu-animate absolute bottom-[110%] left-0 z-20 w-64 rounded-2xl border border-white/40 bg-white/95 p-3 shadow-2xl dark:border-slate-700 dark:bg-slate-900/95">
+      <div className="grid grid-cols-2 gap-3">
+        {items.map((item) => (
+          <button
+            key={item.label}
+            type="button"
+            onClick={() => {
+              item.action();
+              onClose();
+            }}
+            className="flex flex-col items-center gap-2 rounded-xl bg-[#f7faff] p-3 text-center text-xs font-semibold text-[rgb(var(--text-primary))] transition hover:bg-[#e9f1ff] dark:bg-white/5 dark:text-white dark:hover:bg-white/10"
+          >
+            <span className="flex h-10 w-10 items-center justify-center rounded-2xl bg-white text-[#0f1f3c] shadow-sm dark:bg-slate-800 dark:text-white">
+              {item.icon}
+            </span>
+            {item.label}
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function ClipIcon() {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" className="h-5 w-5">
+      <path
+        d="M8 12.5l5.5-5.5a3 3 0 114.24 4.24l-7.5 7.5a4 4 0 11-5.66-5.66l7-7"
+        stroke="currentColor"
+        strokeWidth="1.6"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
+
+function CameraIcon() {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" className="h-5 w-5">
+      <path d="M4 8a2 2 0 012-2h2l1-2h4l1 2h2a2 2 0 012 2v8a2 2 0 01-2 2H6a2 2 0 01-2-2V8z" stroke="currentColor" strokeWidth="1.6" />
+      <circle cx="12" cy="12" r="3.2" stroke="currentColor" strokeWidth="1.6" />
+    </svg>
+  );
+}
+
+function CameraFilledIcon() {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" className="h-5 w-5">
+      <path
+        d="M4 8a2 2 0 012-2h2l1-2h4l1 2h2a2 2 0 012 2v8a2 2 0 01-2 2H6a2 2 0 01-2-2V8z"
+        stroke="currentColor"
+        strokeWidth="1.6"
+        fill="currentColor"
+        fillOpacity="0.08"
+      />
+      <circle cx="12" cy="12" r="3.2" stroke="currentColor" strokeWidth="1.6" />
+    </svg>
+  );
+}
+
+function GalleryIcon() {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" className="h-5 w-5">
+      <rect x="4" y="5" width="16" height="14" rx="2" stroke="currentColor" strokeWidth="1.6" />
+      <path d="M8 13l2.5-3 3 4 2-2 2.5 3.5" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
+      <circle cx="9" cy="9" r="1" fill="currentColor" />
+    </svg>
+  );
+}
+
+function DocIcon() {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" className="h-5 w-5">
+      <path d="M7 4h6l4 4v10a2 2 0 01-2 2H7a2 2 0 01-2-2V6a2 2 0 012-2z" stroke="currentColor" strokeWidth="1.6" />
+      <path d="M13 4v4h4" stroke="currentColor" strokeWidth="1.6" />
+      <path d="M9 13h6M9 16h4" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
+    </svg>
+  );
+}
+
+function AudioIcon() {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" className="h-5 w-5">
+      <rect x="9" y="4" width="6" height="12" rx="3" stroke="currentColor" strokeWidth="1.6" />
+      <path d="M6 12v1a6 6 0 0012 0v-1" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
+      <path d="M12 20v2" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
+    </svg>
+  );
+}
+
+function extractJsonFromText(text = "") {
+  if (!text) return null;
+  const match = text.match(/\{[\s\S]*\}/);
+  if (!match) return null;
+  try {
+    return JSON.parse(match[0]);
+  } catch {
+    return null;
+  }
+}
+
+function inferMealNameFromText(text = "") {
+  if (!text) return "Refeição";
+  const firstLine = text.split("\n")[0] || text;
+  const beforeSeparator = firstLine.split(/[:\-–]/)[0]?.trim();
+  const candidate = beforeSeparator || firstLine.trim();
+  return candidate?.slice(0, 60) || "Refeição";
+}
+
+function extractMealTotalsFromText(text = "") {
+  if (!text) return null;
+  const normalized = text.normalize("NFC");
+  const matches = [...normalized.matchAll(/(calorias?|kcal|prote[ií]nas?|prot|carboidratos?|carbo|carbs?|gorduras?|gordura|fat)\s*[:=]?\s*(\d+[.,]?\d*)/gi)];
+  if (matches.length === 0) {
+    return null;
+  }
+
+  const totals = {
+    calorias: null,
+    proteina: null,
+    carboidrato: null,
+    gordura: null,
+  };
+
+  matches.forEach(([, label, value]) => {
+    const num = Number(value.replace(",", "."));
+    const rounded = Number.isFinite(num) ? Math.round(num) : null;
+    if (/calorias?|kcal/i.test(label)) totals.calorias = rounded ?? totals.calorias;
+    else if (/prote/i.test(label) || /^prot/i.test(label)) totals.proteina = rounded ?? totals.proteina;
+    else if (/carb/i.test(label)) totals.carboidrato = rounded ?? totals.carboidrato;
+    else if (/gordur|fat/i.test(label)) totals.gordura = rounded ?? totals.gordura;
+  });
+
+  const hasAny = totals.calorias !== null || totals.proteina !== null || totals.carboidrato !== null || totals.gordura !== null;
+  if (!hasAny) return null;
+
+  return {
+    calorias: totals.calorias ?? 0,
+    proteina: totals.proteina ?? 0,
+    carboidrato: totals.carboidrato ?? 0,
+    gordura: totals.gordura ?? 0,
+  };
+}
+
+function buildRecipePrompt() {
+  return `Você é um chef de nutrição. Gere uma receita com macros e responda SOMENTE JSON:
+{
+  "titulo": "Nome curto da refeição",
+  "descricao": "Descrição dos alimentos e preparo",
+  "valores_totais": {
+    "calorias": 0,
+    "proteinas": 0,
+    "carboidratos": 0,
+    "gorduras": 0
+  }
+}
+Regras: valores realistas, arredonde para inteiros, não escreva nada fora do JSON.`;
+}
+
+function buildSystemPrompt(context, displayName, latestEvolution, profileData, usePersonalContext) {
+  const evoParts = [];
+  if (latestEvolution) {
+    if (latestEvolution.peso) evoParts.push(`Peso: ${latestEvolution.peso} kg`);
+    if (latestEvolution.altura) evoParts.push(`Altura: ${latestEvolution.altura} m`);
+    if (latestEvolution.imc) evoParts.push(`IMC: ${latestEvolution.imc}`);
+    if (latestEvolution.gordura_corporal) evoParts.push(`Gordura corporal: ${latestEvolution.gordura_corporal}%`);
+    if (latestEvolution.massa_magra) evoParts.push(`Massa magra: ${latestEvolution.massa_magra} kg`);
+    const medidas = [
+      latestEvolution.peito && `Peito ${latestEvolution.peito} cm`,
+      latestEvolution.braco && `Braço ${latestEvolution.braco} cm`,
+      latestEvolution.cintura && `Cintura ${latestEvolution.cintura} cm`,
+      latestEvolution.quadril && `Quadril ${latestEvolution.quadril} cm`,
+      latestEvolution.perna && `Perna ${latestEvolution.perna} cm`,
+    ].filter(Boolean);
+    if (medidas.length > 0) {
+      evoParts.push(`Circunferências: ${medidas.join(" | ")}`);
+    }
+  }
+  const evoSummary = evoParts.length > 0 ? evoParts.join(" | ") : "Sem registros de evolução ainda.";
+
+  const profileParts = [];
+  if (usePersonalContext && profileData) {
+    if (profileData.nome) profileParts.push(`Nome completo: ${profileData.nome}`);
+    if (profileData.sexo) profileParts.push(`Sexo: ${profileData.sexo}`);
+    if (profileData.idade) profileParts.push(`Idade: ${profileData.idade} anos`);
+    if (profileData.data_nascimento) profileParts.push(`Nascimento: ${profileData.data_nascimento}`);
+    if (profileData.peso) profileParts.push(`Peso atual: ${profileData.peso} kg`);
+    if (profileData.altura) profileParts.push(`Altura: ${profileData.altura} m`);
+    if (profileData.objetivo) profileParts.push(`Objetivo pessoal: ${profileData.objetivo}`);
+    if (profileData.nivel) profileParts.push(`Nivel: ${profileData.nivel}`);
+    if (profileData.objetivo_peso_kg) profileParts.push(`Meta de peso: ${profileData.objetivo_peso_kg} kg`);
+    if (profileData.meta_calorias) profileParts.push(`Meta calorias: ${profileData.meta_calorias} kcal`);
+    if (profileData.meta_proteina_g) profileParts.push(`Meta proteina: ${profileData.meta_proteina_g} g`);
+    if (profileData.meta_carbo_g) profileParts.push(`Meta carbo: ${profileData.meta_carbo_g} g`);
+    if (profileData.meta_gordura_g) profileParts.push(`Meta gordura: ${profileData.meta_gordura_g} g`);
+    if (profileData.dias_treino_semana) profileParts.push(`Dias treino/semana: ${profileData.dias_treino_semana}`);
+    if (profileData.tempo_treino_min) profileParts.push(`Tempo treino: ${profileData.tempo_treino_min} min`);
+    if (profileData.restricoes_alimentares) profileParts.push(`Restricoes alimentares: ${profileData.restricoes_alimentares}`);
+    if (profileData.alergias) profileParts.push(`Alergias: ${profileData.alergias}`);
+    if (profileData.medicacoes) profileParts.push(`Medicacoes: ${profileData.medicacoes}`);
+    if (profileData.saude_observacoes) profileParts.push(`Observacoes de saude: ${profileData.saude_observacoes}`);
+  }
+  const profileSummary = profileParts.length > 0 ? profileParts.join(" | ") : "Sem dados pessoais adicionais.";
+
+  return `Você é o Coach Virtual do aplicativo MEU SHAPE. Sempre responda em português, com tom motivador e direto.
+Dados do usuário:
+- Nome: ${displayName}
+- Objetivo principal: ${context.objective}
+- Calorias alvo: ${context.calories} kcal
+- Equipamentos disponíveis: ${context.equipment.join(", ") || "peso corporal"}
+- Evolução recente: ${evoSummary}
+${usePersonalContext ? `- Dados pessoais: ${profileSummary}` : "- Dados pessoais: ignorar (criacao livre)."}
+
+Quando sugerir treinos, informe séries, repetições, carga sugerida (em % ou RPE) e tempo de descanso.
+Quando falar sobre nutrição, detalhe proteínas, carboidratos e gorduras.
+Indique cuidados de segurança e lembre o usuário de registrar execuções.
+
+ATENÇÃO: SEMPRE inclua AO FINAL dois blocos JSON:
+1) Entre ${"<<<EXERCICIOS_JSON>>>"} e ${"<<<FIM_EXERCICIOS_JSON>>>"} com TODOS os exercícios citados (mesmo que já existam). Formato: array de objetos {nome, grupo, descricao, equipamento, tipo_execucao, nivel, risco, execucao}. Valores permitidos: grupo: peito, costas, ombros, pernas, gluteos, biceps, triceps, abdomen, cardio, fullbody. tipo_execucao: livre, maquina, smith, polia, peso_corporal, outro. nivel: basico, intermediario, avancado, pro. risco: baixo, moderado, alto. Se não houver exercícios, retorne [].
+2) Entre ${"<<<FICHA_JSON>>>"} e ${"<<<FIM_FICHA_JSON>>>"} descreva a ficha completa. Estrutura:
+{
+  "nome": "Título da ficha",
+  "descricao": "Resumo",
+  "nivel": "iniciante|intermediario|avancado|pro",
+  "objetivo": "ex.: hipertrofia, emagrecimento",
+  "visibilidade": "privada",
+  "treinos": [
+    {
+      "nome": "Treino A",
+      "descricao": "Foco do dia",
+      "subdivisao": "A",
+      "ordem": 1,
+      "exercicios": [
+        { "nome": "Supino reto com halteres", "series": 3, "repeticoes": "10-12", "carga": null, "descanso_segundos": 90, "observacoes": null, "grupo": "peito", "tipo_execucao": "livre", "nivel": "basico", "risco": "baixo", "execucao": null, "equipamento": "Halteres" }
+      ]
+    }
+  ]
+}
+Se não houver ficha, retorne um objeto vazio {}. Não escreva nada além dos dois blocos JSON ao final.`;
+}

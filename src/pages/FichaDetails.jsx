@@ -1,18 +1,29 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { Link, useNavigate, useParams } from "react-router-dom";
-import { getFichaById, listFichaTreinos } from "../services/fichas.js";
+import { deleteFicha, getFichaById, listFichaTreinos, updateFichaFields } from "../services/fichas.js";
+import { saveSelectedFichaPreference } from "../services/profile.js";
 import { useAuth } from "../context/AuthContext.jsx";
 import { resolveMediaUrl } from "../utils/media.js";
 import { listExercisePreferences, upsertExercisePreference } from "../services/preferences.js";
 import { getExerciseLoadSuggestions } from "../services/suggestions.js";
-import { createCompletedTreino, logExerciseExecution } from "../services/executions.js";
-import { CheckCircle2, Play, Upload } from "lucide-react";
+import {
+  createCompletedTreino,
+  getWeeklyTreinosSummary,
+  logExerciseExecution,
+  updateCompletedTreinoMetrics,
+} from "../services/executions.js";
+import { createFeedPost } from "../services/feed.js";
+import { getPlaylistPlayForDate } from "../services/playlists.js";
+import { CheckCircle2, Clock3, FileDown, Play, Share2, Sparkles, Upload } from "lucide-react";
 import audioLinksRaw from "../../linksaudio.txt?raw";
 import toast from "react-hot-toast";
-import { saveSelectedFicha } from "../utils/selectedFicha.js";
+import { clearSelectedFicha, saveSelectedFicha } from "../utils/selectedFicha.js";
+import { supabase } from "../lib/supabase.js";
 
-const FALLBACK_THUMBNAIL = "https://images.unsplash.com/photo-1518611012118-696072aa579a?auto=format&fit=crop&w=1600&q=80";
+const FALLBACK_THUMBNAIL =
+  "https://wqqygppadqecwwznocny.supabase.co/storage/v1/object/public/fichas/thumbnail%20fichas.png";
+const API_BASE = (import.meta.env.VITE_API_BASE || "").replace(/\/$/, "");
 const SUPER_USER_EMAIL = "balbino10@hotmail.com";
 const LEVEL_LABELS = {
   iniciante: "Iniciante",
@@ -25,12 +36,96 @@ const AUDIO_SOURCES = audioLinksRaw
   .map((line) => line.trim())
   .map(normalizeAudioSource)
   .filter(Boolean);
+const FICHAS_BUCKET = import.meta.env.VITE_SUPABASE_FICHAS_BUCKET?.trim() || "fichas";
+
+let html2canvasPromise = null;
+let jsPdfPromise = null;
 
 function formatDate(value) {
   if (!value) return "Sem registro";
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return value;
   return date.toLocaleDateString("pt-BR", { day: "2-digit", month: "short", year: "numeric" });
+}
+
+function normalizeDateKey(value) {
+  if (!value) return null;
+  if (value instanceof Date) return value.toISOString().slice(0, 10);
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    return trimmed ? trimmed.slice(0, 10) : null;
+  }
+  return null;
+}
+
+function buildPdfFileName(name) {
+  const sanitized = (name || "ficha-meu-shape")
+    .replace(/[^A-Za-z0-9-_ ]/g, "")
+    .trim()
+    .replace(/\s+/g, "-");
+  return `${sanitized || "ficha-meu-shape"}.pdf`;
+}
+
+function base64ToBlob(base64, mimeType = "image/png") {
+  const binary = atob(base64);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i += 1) {
+    bytes[i] = binary.charCodeAt(i);
+  }
+  return new Blob([bytes], { type: mimeType });
+}
+
+function parseNumberValue(value) {
+  if (value == null || value === "") return null;
+  if (typeof value === "number") {
+    return Number.isFinite(value) ? value : null;
+  }
+  if (typeof value === "string") {
+    const normalized = value.replace(",", ".");
+    const match = normalized.match(/-?\d+(?:\.\d+)?/);
+    if (!match) return null;
+    const parsed = Number(match[0]);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+  return null;
+}
+
+function resolveTreinoVolume(treino) {
+  const candidates = [
+    treino?.volume_total,
+    treino?.volume_estimado,
+    treino?.volume_estimado_total,
+    treino?.volume_estimado_kg,
+    treino?.volume_total_kg,
+    treino?.volume_kg,
+    treino?.volume,
+  ];
+  for (const candidate of candidates) {
+    const parsed = parseNumberValue(candidate);
+    if (parsed != null && parsed > 0) {
+      return parsed;
+    }
+  }
+
+  const exercicios = Array.isArray(treino?.ficha_exercicios) ? treino.ficha_exercicios : [];
+  let total = 0;
+  exercicios.forEach((item) => {
+    const carga =
+      parseNumberValue(item.carga) ??
+      parseNumberValue(item.carga_sugerida) ??
+      parseNumberValue(item.carga_prescrita);
+    if (!carga || carga <= 0) return;
+    const series = parseNumberValue(item.series) ?? 0;
+    const repeticoes = parseNumberValue(item.repeticoes) ?? 0;
+    let volume = carga;
+    if (series > 0 && repeticoes > 0) {
+      volume = carga * series * repeticoes;
+    } else if (series > 0) {
+      volume = carga * series;
+    }
+    total += volume;
+  });
+  return total > 0 ? total : null;
 }
 
 export default function FichaDetailsPage() {
@@ -40,7 +135,57 @@ export default function FichaDetailsPage() {
   const [state, setState] = useState({ loading: true, error: null, ficha: null });
   const [treinoState, setTreinoState] = useState({ loading: true, error: null, items: [] });
   const [sessionTreino, setSessionTreino] = useState(null);
+  const [completionDates, setCompletionDates] = useState({});
   const [registerStatus, setRegisterStatus] = useState({});
+  const [completeStatus, setCompleteStatus] = useState({});
+  const [deleteStatus, setDeleteStatus] = useState("idle");
+  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
+  const [shareState, setShareState] = useState({ loading: false, error: null, treino: null });
+  const [exportState, setExportState] = useState({ loading: false, error: null });
+  const [todayPlaylist, setTodayPlaylist] = useState(null);
+  const [weeklyTreinos, setWeeklyTreinos] = useState([]);
+  const [mediaUploading, setMediaUploading] = useState({ thumbnail: false, capa: false });
+  const [aiThumbnailGenerating, setAiThumbnailGenerating] = useState(false);
+  const [aiThumbnailStyle, setAiThumbnailStyle] = useState("clean");
+  const [completionModal, setCompletionModal] = useState({
+    open: false,
+    treinoNome: "",
+    volumeTotal: null,
+    totalSeries: null,
+    totalRepeticoes: null,
+    totalExercicios: null,
+  });
+  const [treinoMetricsMap, setTreinoMetricsMap] = useState({});
+  const shareCardRef = useRef(null);
+  const pdfPageRefs = useRef([]);
+  const modalTarget = typeof document !== "undefined" ? document.body : null;
+
+  const handleMetricsChange = useCallback((treinoId, metrics) => {
+    setTreinoMetricsMap((prev) => {
+      const prevMetrics = prev[treinoId];
+      if (
+        prevMetrics &&
+        prevMetrics.volumeTotal === metrics.volumeTotal &&
+        prevMetrics.totalSeries === metrics.totalSeries &&
+        prevMetrics.totalRepeticoes === metrics.totalRepeticoes &&
+        prevMetrics.totalExercicios === metrics.totalExercicios
+      ) {
+        return prev;
+      }
+      return { ...prev, [treinoId]: metrics };
+    });
+  }, []);
+
+  useEffect(() => {
+    if (typeof document === "undefined") return undefined;
+    const originalOverflow = document.body.style.overflow;
+    if (deleteDialogOpen) {
+      document.body.style.overflow = "hidden";
+    }
+    return () => {
+      document.body.style.overflow = originalOverflow;
+    };
+  }, [deleteDialogOpen]);
 
   useEffect(() => {
     let active = true;
@@ -84,6 +229,38 @@ export default function FichaDetailsPage() {
     };
   }, [fichaId]);
 
+  useEffect(() => {
+    if (!user?.id) {
+      setTodayPlaylist(null);
+      setWeeklyTreinos([]);
+      return undefined;
+    }
+    let active = true;
+    getPlaylistPlayForDate({ usuarioId: user.id })
+      .then((data) => {
+        if (!active) return;
+        setTodayPlaylist(data);
+      })
+      .catch((err) => {
+        if (!active) return;
+        console.warn("[FichaDetails] falha ao carregar playlist do dia:", err);
+        setTodayPlaylist(null);
+      });
+    getWeeklyTreinosSummary({ usuarioId: user.id })
+      .then((data) => {
+        if (!active) return;
+        setWeeklyTreinos(Array.isArray(data) ? data : []);
+      })
+      .catch((err) => {
+        if (!active) return;
+        console.warn("[FichaDetails] falha ao carregar treinos da semana:", err);
+        setWeeklyTreinos([]);
+      });
+    return () => {
+      active = false;
+    };
+  }, [user?.id]);
+
   const { loading, error, ficha } = state;
   const { loading: treinosLoading, error: treinosError, items: treinos } = treinoState;
   const isOwner = useMemo(() => {
@@ -93,28 +270,278 @@ export default function FichaDetailsPage() {
     }
     return Boolean(user?.id && ficha?.usuario_id === user.id);
   }, [user, ficha]);
+  const getCompletionDate = useCallback(
+    (treinoId) => completionDates[treinoId] || new Date().toLocaleDateString("en-CA"),
+    [completionDates],
+  );
+  const handleCompletionDateChange = useCallback((treinoId, value) => {
+    setCompletionDates((prev) => ({ ...prev, [treinoId]: value }));
+  }, []);
   const handleEditFicha = () => {
     if (!ficha?.id) return;
     navigate(`/fichas/${ficha.id}/editar`);
   };
-  const ensureSessionTreino = useCallback(async () => {
-    if (sessionTreino?.id) return sessionTreino;
-    if (!user?.id) throw new Error("Entre para registrar execucoes.");
-    const created = await createCompletedTreino({
-      usuarioId: user.id,
-      fichaId: ficha?.id ?? null,
-      data: new Date(),
-    });
-    setSessionTreino(created);
-    return created;
-  }, [ficha?.id, sessionTreino, user?.id]);
+  const handleDeleteFicha = useCallback(async () => {
+    if (!isOwner || !ficha?.id) return;
+
+    setDeleteStatus("loading");
+    try {
+      await deleteFicha({
+        fichaId: ficha.id,
+        usuarioId: user?.id ?? null,
+        usuarioEmail: user?.email ?? "",
+      });
+      clearSelectedFicha(user?.id);
+      if (user?.id) {
+        saveSelectedFichaPreference({ usuarioId: user.id, fichaId: null }).catch((error) => {
+          console.error("[FichaDetails] falha ao limpar preferencia:", error);
+        });
+      }
+      toast.success("Ficha excluida com sucesso.");
+      navigate("/fichas");
+    } catch (err) {
+      console.error("[FichaDetails] falha ao excluir ficha:", err);
+      toast.error(err?.message ?? "Nao foi possivel excluir a ficha agora.");
+    } finally {
+      setDeleteStatus("idle");
+      setDeleteDialogOpen(false);
+    }
+  }, [ficha?.id, isOwner, navigate, user?.email, user?.id]);
+  const ensureSessionTreino = useCallback(
+    async (dateOverride = null, treinoNome = null) => {
+      const dateKey = normalizeDateKey(dateOverride) || new Date().toISOString().slice(0, 10);
+      if (sessionTreino?.id && sessionTreino.data === dateKey) return sessionTreino;
+      if (!user?.id) throw new Error("Entre para registrar execucoes.");
+      const treinoNomeBase = ficha?.nome ?? "Treino Meu Shape";
+      const created = await createCompletedTreino({
+        usuarioId: user.id,
+        fichaId: ficha?.id ?? null,
+        treinoNome: treinoNome ?? treinoNomeBase,
+        data: dateKey,
+      });
+      const nextSession = { id: created.id, data: dateKey };
+      setSessionTreino(nextSession);
+      return nextSession;
+    },
+    [ficha?.id, sessionTreino, user?.id],
+  );
+
+  const ensureHtml2Canvas = useCallback(async () => {
+    if (typeof window === "undefined") {
+      throw new Error("Compartilhamento indisponivel neste dispositivo.");
+    }
+    if (window.html2canvas) return window.html2canvas;
+    if (!html2canvasPromise) {
+      html2canvasPromise = new Promise((resolve, reject) => {
+        const script = document.createElement("script");
+        script.src = "https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js";
+        script.async = true;
+        script.onload = () => resolve(window.html2canvas);
+        script.onerror = () => reject(new Error("Falha ao carregar gerador de imagem para compartilhar."));
+        document.body.appendChild(script);
+      });
+    }
+    return html2canvasPromise;
+  }, []);
+
+  const ensureJsPdf = useCallback(async () => {
+    if (typeof window === "undefined") {
+      throw new Error("Exportacao indisponivel neste dispositivo.");
+    }
+    if (window.jspdf?.jsPDF) return window.jspdf.jsPDF;
+    if (!jsPdfPromise) {
+      jsPdfPromise = new Promise((resolve, reject) => {
+        const script = document.createElement("script");
+        script.src = "https://cdn.jsdelivr.net/npm/jspdf@2.5.1/dist/jspdf.umd.min.js";
+        script.async = true;
+        script.onload = () => resolve(window.jspdf?.jsPDF);
+        script.onerror = () => reject(new Error("Falha ao carregar o exportador de PDF."));
+        document.body.appendChild(script);
+      });
+    }
+    const JsPDF = await jsPdfPromise;
+    if (!JsPDF) {
+      throw new Error("Falha ao preparar o exportador de PDF.");
+    }
+    return JsPDF;
+  }, []);
+
+  const buildShareData = useCallback(
+    (treino) => {
+      const exercicios = Array.isArray(treino?.ficha_exercicios) ? treino.ficha_exercicios : [];
+      const principaisExercicios = exercicios.slice(0, 5).map((ex) => ({
+        nome: ex.exercicio?.nome ?? "Exercicio",
+        series: ex.series ?? null,
+        repeticoes: ex.repeticoes ?? null,
+        carga: ex.carga ?? null,
+      }));
+      const miniChart = exercicios.slice(0, 7).map((ex, index) => ({
+        label: ex.exercicio?.nome ?? `S${index + 1}`,
+        value: Math.max(6, Math.round((ex.series ?? 1) * (ex.carga ?? 20))),
+      }));
+      const weeklyPattern =
+        weeklyTreinos.length === 7
+          ? weeklyTreinos.map((item) => ({
+              day: item.day,
+              value: item.value || 0,
+              minutos: item.minutos || 0,
+              date: item.date,
+            }))
+          : Array.from({ length: 7 }).map((_, idx) => {
+              const base = miniChart[idx]?.value ?? miniChart.at(-1)?.value ?? 10;
+              const dayLabels = ["Seg", "Ter", "Qua", "Qui", "Sex", "Sáb", "Dom"];
+              return { day: dayLabels[idx] || `D${idx + 1}`, value: base };
+            });
+
+      const playlistRegistro = todayPlaylist?.playlist ?? todayPlaylist ?? null;
+      const playlistNome =
+        playlistRegistro?.titulo ??
+        treino?.playlist_nome ??
+        ficha?.playlist_nome ??
+        "Playlist do treino";
+      const playlistUrl =
+        playlistRegistro?.spotify_url ??
+        playlistRegistro?.apple_url ??
+        playlistRegistro?.deezer_url ??
+        treino?.playlist_url ??
+        ficha?.playlist_url ??
+        null;
+
+      return {
+        treinoNome: treino?.nome ?? ficha?.nome ?? "Treino Meu Shape",
+        subtitulo: treino?.subdivisao ? `Treino ${treino.subdivisao}` : ficha?.objetivo ?? "Treino premium",
+        duracao:
+          treino?.tempo_estimado_min ??
+          treino?.duracao_min ??
+          treino?.tempo_total_min ??
+          ficha?.tempo_medio_min ??
+          ficha?.duracao_min ??
+          null,
+        volume:
+          treino?.volume_total ??
+          treino?.volume_estimado ??
+          treino?.volume_estimado_total ??
+          treino?.volume_estimado_kg ??
+          ficha?.volume_total ??
+          null,
+        calorias: treino?.calorias ?? treino?.calorias_gastas ?? null,
+        playlist: playlistNome,
+        playlistUrl: playlistUrl,
+        principaisExercicios,
+        miniChart: miniChart.length > 0 ? miniChart : [{ label: "Vol", value: 20 }],
+        weeklyPattern,
+        fotoUsuario:
+          user?.user_metadata?.avatar_url ||
+        user?.user_metadata?.photo_url ||
+        resolveMediaUrl(ficha?.thumbnail_url || ficha?.capa_url) ||
+        null,
+        usuarioNome: user?.user_metadata?.full_name || user?.email || "Atleta Meu Shape",
+        qrLink: `https://meushape.app/fichas/${ficha?.id ?? ""}`,
+      };
+    },
+    [ficha, todayPlaylist, user, weeklyTreinos],
+  );
+
+  const shareTreinoData = useMemo(() => {
+    const treino = shareState.treino;
+    return buildShareData(treino);
+  }, [buildShareData, shareState.treino]);
+
+  const handleShareTreino = useCallback(
+    async (treino) => {
+      if (!treino) return;
+      const shareData = buildShareData(treino);
+      setShareState({ loading: true, error: null, treino });
+      try {
+        const html2canvas = await ensureHtml2Canvas();
+        await new Promise((resolve) => setTimeout(resolve, 80));
+        if (!shareCardRef.current) {
+          throw new Error("Falha ao preparar card.");
+        }
+        const canvas = await html2canvas(shareCardRef.current, {
+          backgroundColor: null,
+          scale: 2,
+          useCORS: true,
+          width: 1080,
+          height: 1920,
+        });
+        const dataUrl = canvas.toDataURL("image/png");
+        const blob = await (await fetch(dataUrl)).blob();
+        const file = new File([blob], "meu-shape-treino.png", { type: "image/png" });
+        if (navigator.canShare && navigator.canShare({ files: [file] })) {
+          await navigator.share({
+            files: [file],
+            title: shareData.treinoNome,
+            text: "Treino concluido no app MEU SHAPE",
+          });
+        } else {
+          const link = document.createElement("a");
+          link.href = dataUrl;
+          link.download = "meu-shape-treino.png";
+          document.body.appendChild(link);
+          link.click();
+          link.remove();
+        }
+        setShareState((prev) => ({ ...prev, loading: false }));
+      } catch (error) {
+        console.error("[FichaDetails] falha ao compartilhar:", error);
+        setShareState({ loading: false, error: error?.message ?? "Nao foi possivel gerar o card agora.", treino });
+      }
+    },
+    [buildShareData, ensureHtml2Canvas],
+  );
+
+  const handleExportPdf = useCallback(async () => {
+    if (!ficha) return;
+    setExportState({ loading: true, error: null });
+    try {
+      const html2canvas = await ensureHtml2Canvas();
+      const JsPDF = await ensureJsPdf();
+      await new Promise((resolve) => setTimeout(resolve, 80));
+      const pdf = new JsPDF({ orientation: "p", unit: "pt", format: "a4" });
+      const pageWidth = pdf.internal.pageSize.getWidth();
+      const pageHeight = pdf.internal.pageSize.getHeight();
+      const pages = pdfPageRefs.current.filter(Boolean);
+      if (!pages.length) {
+        throw new Error("Falha ao preparar a ficha para exportacao.");
+      }
+      for (let index = 0; index < pages.length; index += 1) {
+        const canvas = await html2canvas(pages[index], {
+          backgroundColor: "#ffffff",
+          scale: 2,
+          useCORS: true,
+        });
+        const imgData = canvas.toDataURL("image/png");
+        const scale = Math.min(pageWidth / canvas.width, pageHeight / canvas.height);
+        const imgWidth = canvas.width * scale;
+        const imgHeight = canvas.height * scale;
+        const x = (pageWidth - imgWidth) / 2;
+        const y = (pageHeight - imgHeight) / 2;
+
+        if (index > 0) {
+          pdf.addPage();
+        }
+        pdf.addImage(imgData, "PNG", x, y, imgWidth, imgHeight);
+      }
+
+      const fileName = buildPdfFileName(ficha?.nome || "ficha-meu-shape");
+      pdf.save(fileName);
+      setExportState({ loading: false, error: null });
+      toast.success("PDF exportado com sucesso.");
+    } catch (error) {
+      console.error("[FichaDetails] falha ao exportar PDF:", error);
+      const message = error?.message ?? "Nao foi possivel exportar o PDF agora.";
+      setExportState({ loading: false, error: message });
+      toast.error(message);
+    }
+  }, [ensureHtml2Canvas, ensureJsPdf, ficha]);
 
   const handleRegisterExecution = useCallback(
-    async (exercise, payload) => {
+    async (exercise, payload, dateOverride = null) => {
       if (!user?.id) {
         throw new Error("Entre para registrar execucoes.");
       }
-      const session = await ensureSessionTreino();
+      const session = await ensureSessionTreino(dateOverride);
       const repsText = payload.repeticoes ?? exercise.repeticoes ?? null;
       const cargaValue = payload.carga != null ? payload.carga : exercise.carga ?? null;
       await logExerciseExecution({
@@ -130,35 +557,733 @@ export default function FichaDetailsPage() {
   );
   const handleUseFicha = useCallback(() => {
     if (!ficha) return;
-    const saved = saveSelectedFicha(ficha);
+    const saved = saveSelectedFicha(ficha, user?.id);
     if (saved) {
       toast.success("Ficha definida para o Panorama do Shape.");
+      if (user?.id) {
+        saveSelectedFichaPreference({ usuarioId: user.id, fichaId: ficha.id }).catch((error) => {
+          console.error("[FichaDetails] falha ao sincronizar ficha preferida:", error);
+          toast.error("Ficha salva neste dispositivo. Sincronizacao em nuvem falhou.");
+        });
+      }
       navigate("/");
     } else {
       toast.error("Nao foi possivel salvar esta ficha agora.");
     }
-  }, [ficha, navigate]);
+  }, [ficha, navigate, user?.id]);
+
+  const handleCompleteTreino = useCallback(
+    async (treino) => {
+      if (!user?.id) {
+        toast.error("Entre para registrar a conclusao do treino.");
+        return;
+      }
+      if (!treino?.id) {
+        toast.error("Treino inválido.");
+        return;
+      }
+      setCompleteStatus((prev) => ({ ...prev, [treino.id]: "saving" }));
+      try {
+        const tituloPrincipal = treino.nome ?? "Treino sem nome";
+        const subdivisaoTitulo =
+          treino.subdivisao_label ?? (treino.subdivisao ? `Treino ${treino.subdivisao}` : null);
+        const treinoNomeCompleto = subdivisaoTitulo ? `${subdivisaoTitulo} - ${tituloPrincipal}` : tituloPrincipal;
+        const dateKey = getCompletionDate(treino.id);
+        const session = await ensureSessionTreino(dateKey, treinoNomeCompleto);
+        if (!session?.id) {
+          throw new Error("Nao foi possivel iniciar a sessão de treino.");
+        }
+        // A sessão já é criada em ensureSessionTreino; aqui apenas confirmamos o estado.
+        setCompleteStatus((prev) => ({ ...prev, [treino.id]: "ok" }));
+        toast.success("Treino concluido!");
+        const treinoCompleto = treinos.find((item) => item.id === treino.id) ?? treino;
+        const metrics = treinoMetricsMap[treino.id] ?? {};
+        const volumeCalculado = metrics.volumeTotal;
+        const volumeTotal =
+          Number.isFinite(volumeCalculado) && volumeCalculado > 0
+            ? Math.round(volumeCalculado * 100) / 100
+            : resolveTreinoVolume(treinoCompleto);
+        const shouldPersistMetrics =
+          (volumeTotal != null && volumeTotal > 0) ||
+          Number.isFinite(metrics.totalSeries) ||
+          Number.isFinite(metrics.totalRepeticoes) ||
+          Number.isFinite(metrics.totalExercicios);
+        const shouldPersistName = Boolean(treinoNomeCompleto);
+        if (shouldPersistMetrics || shouldPersistName) {
+          updateCompletedTreinoMetrics({
+            usuarioId: user.id,
+            treinoId: session.id,
+            treinoNome: treinoNomeCompleto,
+            volumeTotalKg: volumeTotal,
+            totalSeries: metrics.totalSeries ?? null,
+            totalExercicios: metrics.totalExercicios ?? null,
+            rpe: metrics.totalRepeticoes ?? null,
+          }).catch((err) => {
+            console.error("[FichaDetails] falha ao salvar volume do treino:", err);
+          });
+        }
+        setCompletionModal({
+          open: true,
+          treinoNome: treinoNomeCompleto ?? treinoCompleto.nome ?? ficha?.nome ?? "Treino",
+          volumeTotal,
+          totalSeries: metrics.totalSeries ?? null,
+          totalRepeticoes: metrics.totalRepeticoes ?? null,
+          totalExercicios: metrics.totalExercicios ?? null,
+        });
+
+        // Cria post no feed (não bloqueia fluxo em caso de erro)
+        const tituloTreino = treino.nome ?? "Treino concluído";
+        const conteudoBase = [];
+        if (ficha?.nome) conteudoBase.push(`Ficha: ${ficha.nome}`);
+        if (treino.subdivisao) conteudoBase.push(`Divisão: ${treino.subdivisao}`);
+        const volumeTotalFeed =
+          treino.volume_total ??
+          treino.volume_estimado ??
+          treino.volume_estimado_kg ??
+          treino.volume_estimado_total ??
+          null;
+        const duracaoMin = treino.tempo_estimado_min ?? treino.duracao_min ?? treino.tempo_total_min ?? null;
+        if (volumeTotalFeed) conteudoBase.push(`Volume: ${volumeTotalFeed}`);
+        if (duracaoMin) conteudoBase.push(`Tempo: ${duracaoMin} min`);
+        const exerciciosResumo = Array.isArray(treino.ficha_exercicios)
+          ? treino.ficha_exercicios.slice(0, 5).map((ex) => ({
+              nome: ex.exercicio?.nome ?? "Exercício",
+              series: ex.series ?? null,
+              reps: ex.repeticoes ?? null,
+              carga: ex.carga ?? null,
+            }))
+          : [];
+        const destaques = [];
+        if (volumeTotalFeed) destaques.push(`Volume total: ${volumeTotalFeed}`);
+        if (duracaoMin) destaques.push(`Tempo: ${duracaoMin} min`);
+        const playlistNome = treino.playlist_nome ?? treino.playlist ?? null;
+        const playlistUrl = treino.playlist_url ?? null;
+        const payload = {
+          usuario_id: user.id,
+          tipo: "treino",
+          titulo: tituloTreino,
+          conteudo: conteudoBase.join(" • ") || null,
+          visibilidade: "public",
+          dados: {
+            fichaId: ficha?.id ?? null,
+            treinoId: treino.id,
+            fichaNome: ficha?.nome ?? null,
+            subdivisao: treino.subdivisao ?? treino.subdivisao_label ?? null,
+            volume_total: volumeTotalFeed,
+            duracao_min: duracaoMin,
+            playlist: playlistNome ? { nome: playlistNome, url: playlistUrl } : null,
+            exercicios: exerciciosResumo,
+            destaques,
+          },
+        };
+        createFeedPost(payload).catch((err) => {
+          console.error("[FichaDetails] falha ao publicar no feed:", err);
+        });
+      } catch (error) {
+        console.error("[FichaDetails] falha ao concluir treino:", error);
+        toast.error(error?.message ?? "Nao foi possivel concluir o treino agora.");
+        setCompleteStatus((prev) => ({ ...prev, [treino.id]: "error" }));
+      }
+    },
+    [ensureSessionTreino, ficha?.id, ficha?.nome, getCompletionDate, treinoMetricsMap, treinos, user?.id],
+  );
+
+  const handleUploadMidia = useCallback(
+    async (event, type) => {
+      const file = event.target.files?.[0];
+      event.target.value = "";
+      if (!file) return;
+      if (!isOwner || !ficha?.id) {
+        toast.error("Somente o dono da ficha pode enviar midias.");
+        return;
+      }
+      if (file.size > 5 * 1024 * 1024) {
+        toast.error("Envie imagens de ate 5MB.");
+        return;
+      }
+
+      setMediaUploading((prev) => ({ ...prev, [type]: true }));
+      try {
+        const extension = file.name.split(".").pop() || "jpg";
+        const path = `${ficha.id}/${type}-${Date.now()}.${extension}`;
+        const { error: uploadError } = await supabase.storage
+          .from(FICHAS_BUCKET)
+          .upload(path, file, { cacheControl: "3600", upsert: true, contentType: file.type || "image/jpeg" });
+        if (uploadError) throw uploadError;
+
+        const { data } = supabase.storage.from(FICHAS_BUCKET).getPublicUrl(path);
+        const publicUrl = data?.publicUrl;
+        if (!publicUrl) {
+          throw new Error("Nao foi possivel obter a URL publica da imagem.");
+        }
+
+        const fieldKey = type === "capa" ? "capa_url" : "thumbnail_url";
+        await updateFichaFields({ fichaId: ficha.id, fields: { [fieldKey]: publicUrl } });
+
+        setState((prev) => (prev?.ficha ? { ...prev, ficha: { ...prev.ficha, [fieldKey]: publicUrl } } : prev));
+        toast.success("Midia atualizada!");
+      } catch (error) {
+        console.error("[FichaDetails] falha upload midia:", error);
+        const message =
+          error?.message?.toLowerCase?.()?.includes("row-level security") || error?.message?.toLowerCase?.()?.includes("rls")
+            ? "Politica do bucket bloqueou o upload. Verifique o RLS do bucket fichas."
+            : error?.message ?? "Nao foi possivel enviar a imagem agora.";
+        toast.error(message);
+      } finally {
+        setMediaUploading((prev) => ({ ...prev, [type]: false }));
+      }
+    },
+    [ficha?.id, isOwner],
+  );
+
+  const handleGenerateThumbnail = useCallback(async () => {
+    if (!isOwner || !ficha?.id) {
+      toast.error("Somente o dono da ficha pode gerar thumbnail.");
+      return;
+    }
+
+    setAiThumbnailGenerating(true);
+    try {
+      const response = await fetch(`${API_BASE}/api/generateThumbnail`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          fichaNome: ficha?.nome || "Treino personalizado",
+          fichaDescricao: ficha?.descricao || "",
+          style: aiThumbnailStyle,
+        }),
+      });
+      const data = await response.json();
+      if (!response.ok) {
+        const details = typeof data?.details === "string" ? ` (${data.details})` : "";
+        throw new Error(`${data?.error ?? "Falha ao gerar a thumbnail."}${details}`);
+      }
+      if (!data?.base64) {
+        throw new Error("Resposta invalida da IA.");
+      }
+
+      const mimeType = data?.mimeType || "image/png";
+      const blob = base64ToBlob(data.base64, mimeType);
+      const extension = mimeType.includes("png") ? "png" : "jpg";
+      const path = `${ficha.id}/thumbnail-ai-${Date.now()}.${extension}`;
+      const { error: uploadError } = await supabase.storage
+        .from(FICHAS_BUCKET)
+        .upload(path, blob, { cacheControl: "3600", upsert: true, contentType: mimeType });
+      if (uploadError) throw uploadError;
+
+      const { data: publicData } = supabase.storage.from(FICHAS_BUCKET).getPublicUrl(path);
+      const publicUrl = publicData?.publicUrl;
+      if (!publicUrl) {
+        throw new Error("Nao foi possivel obter a URL publica da imagem.");
+      }
+
+      await updateFichaFields({ fichaId: ficha.id, fields: { thumbnail_url: publicUrl } });
+      setState((prev) => (prev?.ficha ? { ...prev, ficha: { ...prev.ficha, thumbnail_url: publicUrl } } : prev));
+      toast.success("Thumbnail gerada com IA!");
+    } catch (error) {
+      console.error("[FichaDetails] falha ao gerar thumbnail:", error);
+      toast.error(error?.message ?? "Nao foi possivel gerar a thumbnail agora.");
+    } finally {
+      setAiThumbnailGenerating(false);
+    }
+  }, [aiThumbnailStyle, ficha?.descricao, ficha?.id, ficha?.nome, isOwner]);
+
+  pdfPageRefs.current = [];
 
   return (
     <div className="space-y-10">
+      <div className="fixed left-[-9999px] top-[-9999px]" aria-hidden ref={shareCardRef}>
+        <div
+          style={{
+            width: "1080px",
+            height: "1920px",
+            background: "radial-gradient(circle at top right, #1a2b44 0%, #0a0f1a 60%)",
+          }}
+          className="relative overflow-hidden rounded-[48px] border border-[#32C5FF]/40 p-10 text-white shadow-[0_30px_120px_rgba(0,0,0,0.65)]"
+        >
+          <div className="pointer-events-none absolute inset-0 opacity-50 blur-3xl" style={{ background: "radial-gradient(circle at 30% 20%, rgba(103,255,154,0.18), transparent 35%), radial-gradient(circle at 80% 15%, rgba(50,197,255,0.22), transparent 40%), radial-gradient(circle at 50% 70%, rgba(255,255,255,0.08), transparent 45%)" }} />
+          <div className="relative flex h-full flex-col justify-between">
+            <div className="flex items-start justify-between">
+              <div>
+                <p className="text-xs uppercase tracking-[0.45em] text-white/60">Treino concluido</p>
+                <h1 className="mt-3 text-5xl font-semibold leading-tight">{shareTreinoData.treinoNome}</h1>
+                <p className="mt-2 text-lg text-[#8BE4FF]">{shareTreinoData.subtitulo}</p>
+              </div>
+              <img src="/images/logo_light.png" alt="MEU SHAPE" className="h-12 w-auto opacity-80" />
+            </div>
+
+            <div className="mt-8 grid gap-6">
+              <div className="flex items-center gap-4 rounded-[32px] border border-white/10 bg-white/5 p-5 backdrop-blur">
+                {shareTreinoData.fotoUsuario ? (
+                  <img
+                    src={shareTreinoData.fotoUsuario}
+                    alt={shareTreinoData.usuarioNome}
+                    className="h-20 w-20 rounded-[22px] object-cover ring-2 ring-[#32C5FF]/70"
+                  />
+                ) : (
+                  <div className="flex h-20 w-20 items-center justify-center rounded-[22px] bg-gradient-to-br from-[#32C5FF] to-[#67FF9A] text-xl font-semibold text-[#041220] ring-2 ring-[#32C5FF]/70">
+                    {shareTreinoData.usuarioNome?.slice(0, 2)?.toUpperCase() ?? "MS"}
+                  </div>
+                )}
+                <div>
+                  <p className="text-sm uppercase tracking-[0.35em] text-white/60">Atleta</p>
+                  <p className="text-2xl font-semibold">{shareTreinoData.usuarioNome}</p>
+                  <p className="text-xs text-white/70">Criado no app MEU SHAPE</p>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-4">
+                <div className="rounded-3xl border border-white/10 bg-white/5 p-4">
+                  <p className="text-[11px] uppercase tracking-[0.35em] text-white/60">Duracao</p>
+                  <p className="mt-2 text-3xl font-semibold">{shareTreinoData.duracao ? `${shareTreinoData.duracao} min` : "—"}</p>
+                </div>
+                <div className="rounded-3xl border border-white/10 bg-white/5 p-4">
+                  <p className="text-[11px] uppercase tracking-[0.35em] text-white/60">Volume total</p>
+                  <p className="mt-2 text-3xl font-semibold">{shareTreinoData.volume ?? "—"}</p>
+                </div>
+                <div className="rounded-3xl border border-white/10 bg-white/5 p-4">
+                  <p className="text-[11px] uppercase tracking-[0.35em] text-white/60">Calorias</p>
+                  <p className="mt-2 text-3xl font-semibold">
+                    {shareTreinoData.calorias ? `${shareTreinoData.calorias} kcal` : "—"}
+                  </p>
+                </div>
+                <div className="rounded-3xl border border-white/10 bg-white/5 p-4">
+                  <p className="text-[11px] uppercase tracking-[0.35em] text-white/60">Playlist</p>
+                  <p className="mt-2 text-xl font-semibold">{shareTreinoData.playlist}</p>
+                  {shareTreinoData.playlistUrl ? <p className="text-[11px] text-white/60">{shareTreinoData.playlistUrl}</p> : null}
+                </div>
+              </div>
+
+            <div className="flex flex-wrap items-center justify-between gap-4 rounded-3xl border border-[#32C5FF]/40 bg-gradient-to-r from-[#0f1f3c] via-[#0c1931] to-[#102342] p-4">
+              <div>
+                <p className="text-[11px] uppercase tracking-[0.3em] text-[#67FF9A]">Mini chart</p>
+                <p className="text-sm text-white/70">Volume diario (demo)</p>
+              </div>
+              <div className="flex h-[40px] w-[160px] items-end gap-1 rounded-xl bg-white/5 p-2">
+                {shareTreinoData.miniChart.map((bar, index) => {
+                  const height = Math.min(36, Math.max(8, bar.value / 8));
+                  return (
+                    <div
+                      key={`${bar.label}-${index}`}
+                      className="flex-1 rounded-full bg-gradient-to-t from-[#32C5FF] to-[#67FF9A]"
+                      style={{ height }}
+                      title={bar.label}
+                    />
+                  );
+                })}
+              </div>
+            </div>
+
+            <div className="rounded-[28px] border border-white/10 bg-white/5 p-5">
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-[11px] uppercase tracking-[0.3em] text-white/60">Treinos na semana</p>
+                  <p className="text-sm text-white/70">Consistencia dos ultimos dias</p>
+                </div>
+              </div>
+              <div className="mt-4 grid grid-cols-7 gap-2">
+                {shareTreinoData.weeklyPattern.map((item, idx) => {
+                  const height = Math.min(52, Math.max(10, item.value / 6));
+                  return (
+                    <div key={`${item.day}-${idx}`} className="flex flex-col items-center gap-1">
+                      <div
+                        className="w-full max-w-[32px] rounded-full bg-gradient-to-br from-[#32C5FF] to-[#67FF9A]"
+                        style={{ height }}
+                        title={`${item.day}: ${item.value}`}
+                      />
+                      <span className="text-[11px] text-white/60">{item.day}</span>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+
+              <div className="rounded-[28px] border border-white/10 bg-white/5 p-5">
+                <p className="text-xs uppercase tracking-[0.35em] text-white/60">Principais exercicios</p>
+                <div className="mt-3 space-y-2">
+                  {shareTreinoData.principaisExercicios.map((exercicio, index) => (
+                    <div
+                      key={`${exercicio.nome}-${index}`}
+                      className="flex items-center justify-between rounded-2xl border border-white/10 bg-white/5 px-3 py-2 text-sm"
+                    >
+                      <div>
+                        <p className="font-semibold">{exercicio.nome}</p>
+                        <p className="text-xs text-white/60">
+                          {exercicio.series ? `${exercicio.series}x` : ""} {exercicio.repeticoes ?? "reps livres"}
+                          {exercicio.carga ? ` • ${exercicio.carga} kg` : ""}
+                        </p>
+                      </div>
+                      <span className="text-[11px] text-white/50">#{index + 1}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+
+            <div className="mt-6 flex items-center justify-between rounded-3xl border border-white/10 bg-white/5 p-4">
+              <div>
+                <p className="text-sm font-semibold text-white">Veja meu treino no MEU SHAPE</p>
+                <p className="text-[11px] uppercase tracking-[0.3em] text-white/60">Powered by Inteligencia Artificial MEU SHAPE</p>
+              </div>
+              <div className="flex items-center gap-3">
+                <img
+                  src={`https://quickchart.io/qr?text=${encodeURIComponent(shareTreinoData.qrLink)}&size=180&margin=2`}
+                  alt="QR Code Meu Shape"
+                  className="h-20 w-20 rounded-2xl border border-white/20 bg-white/80 p-2"
+                />
+                <div className="text-[11px] text-white/70">
+                  <p>Escaneie para baixar o app</p>
+                  <p className="mt-1 text-xs text-[#67FF9A]">Criado no app MEU SHAPE</p>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div className="fixed left-[-9999px] top-[-9999px]" aria-hidden>
+        {(() => {
+          const pdfTreinos = Array.isArray(treinos) && treinos.length ? treinos : [null];
+          return pdfTreinos.map((treino, index) => {
+            const exercicios = Array.isArray(treino?.ficha_exercicios) ? treino.ficha_exercicios : [];
+            const treinoTitulo =
+              treino?.subdivisao_label ?? (treino?.subdivisao ? `Treino ${treino.subdivisao}` : "Treino");
+            const duracao =
+              treino?.tempo_estimado_min ??
+              treino?.duracao_min ??
+              treino?.tempo_total_min ??
+              ficha?.tempo_medio_min ??
+              null;
+            const volume =
+              treino?.volume_total ??
+              treino?.volume_estimado ??
+              treino?.volume_estimado_total ??
+              treino?.volume_estimado_kg ??
+              null;
+            const pageKey = treino?.id ?? `${ficha?.id ?? "ficha"}-${index}`;
+
+            return (
+              <div
+                key={pageKey}
+                ref={(el) => {
+                  if (el) pdfPageRefs.current[index] = el;
+                }}
+                className="w-[794px] bg-white text-slate-900"
+                style={{ backgroundColor: "#ffffff", color: "#0f172a" }}
+              >
+                <div className="min-h-[1123px] p-10">
+                  <header className="flex items-start justify-between border-b border-slate-200 pb-6">
+                    <div>
+                      <p className="text-[11px] uppercase tracking-[0.4em] text-slate-400">Ficha de treino</p>
+                      <h1 className="mt-2 text-3xl font-semibold text-slate-900">{ficha?.nome ?? "Ficha Meu Shape"}</h1>
+                      <p className="mt-2 text-sm text-slate-600">
+                        {ficha?.objetivo ?? "Objetivo personalizado"} • {treinos?.length ?? 0} treinos
+                      </p>
+                    </div>
+                    <div className="text-right">
+                      <img src="/images/logo_dark.png" alt="MEU SHAPE" className="h-10 w-auto" />
+                      <p className="mt-2 text-[11px] uppercase tracking-[0.3em] text-slate-400">
+                        Gerado em {formatDate(new Date())}
+                      </p>
+                    </div>
+                  </header>
+
+                  <section className="mt-6 grid grid-cols-3 gap-4">
+                    <div className="rounded-2xl border border-slate-200 p-4">
+                      <p className="text-[11px] uppercase tracking-[0.3em] text-slate-400">Nivel</p>
+                      <p className="mt-2 text-base font-semibold text-slate-900">
+                        {LEVEL_LABELS[ficha?.nivel] ?? "Personalizado"}
+                      </p>
+                    </div>
+                    <div className="rounded-2xl border border-slate-200 p-4">
+                      <p className="text-[11px] uppercase tracking-[0.3em] text-slate-400">Duracao media</p>
+                      <p className="mt-2 text-base font-semibold text-slate-900">
+                        {(() => {
+                          const duracaoFicha = ficha?.tempo_medio_min ?? ficha?.duracao_min ?? ficha?.tempo_total_min ?? null;
+                          return duracaoFicha != null ? `${duracaoFicha} min` : "—";
+                        })()}
+                      </p>
+                    </div>
+                    <div className="rounded-2xl border border-slate-200 p-4">
+                      <p className="text-[11px] uppercase tracking-[0.3em] text-slate-400">Volume alvo</p>
+                      <p className="mt-2 text-base font-semibold text-slate-900">
+                        {(() => {
+                          const volumeFicha = ficha?.volume_total ?? ficha?.volume_estimado ?? null;
+                          return volumeFicha != null ? volumeFicha : "—";
+                        })()}
+                      </p>
+                    </div>
+                  </section>
+
+                  <section className="mt-8">
+                    {treino ? (
+                      <div className="rounded-3xl border border-slate-200 p-5">
+                        <div className="flex items-start justify-between border-b border-slate-200 pb-4">
+                          <div>
+                            <p className="text-[11px] uppercase tracking-[0.35em] text-slate-400">{treinoTitulo}</p>
+                            <h3 className="mt-2 text-lg font-semibold text-slate-900">{treino?.nome ?? "Treino sem nome"}</h3>
+                            {treino?.descricao ? <p className="mt-1 text-sm text-slate-600">{treino.descricao}</p> : null}
+                          </div>
+                          <div className="text-right text-[11px] uppercase tracking-[0.3em] text-slate-400">
+                            <p>{duracao != null ? `${duracao} min` : "Tempo livre"}</p>
+                            <p>{volume != null ? `Volume ${volume}` : "Volume livre"}</p>
+                          </div>
+                        </div>
+
+                        {exercicios.length ? (
+                          <table className="mt-4 w-full text-left text-[11px] text-slate-600" style={{ color: "#475569" }}>
+                            <thead className="text-[10px] uppercase tracking-[0.3em] text-slate-400" style={{ color: "#94a3b8" }}>
+                              <tr>
+                                <th className="pb-2">Exercicio</th>
+                                <th className="pb-2">Series</th>
+                                <th className="pb-2">Reps</th>
+                                <th className="pb-2">Carga</th>
+                                <th className="pb-2">Descanso</th>
+                                <th className="pb-2">Observacoes</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {exercicios.map((item) => {
+                                const exercicioMeta = item.exercicios ?? item.exercicio ?? {};
+                                return (
+                                  <tr
+                                    key={item.id ?? `${treino?.id ?? "treino"}-${exercicioMeta?.nome ?? "ex"}`}
+                                    className="border-t border-slate-200"
+                                  >
+                                    <td className="py-3 pr-3">
+                                      <p className="text-sm font-semibold text-slate-900" style={{ color: "#0f172a" }}>
+                                        {exercicioMeta?.nome ?? "Exercicio"}
+                                      </p>
+                                      <p className="text-[10px] text-slate-400" style={{ color: "#94a3b8" }}>
+                                        {exercicioMeta?.grupo ?? "Grupo livre"}
+                                        {exercicioMeta?.equipamento ? ` · ${exercicioMeta.equipamento}` : ""}
+                                      </p>
+                                    </td>
+                                    <td className="py-3">{item.series ?? "—"}</td>
+                                    <td className="py-3">{item.repeticoes ?? "—"}</td>
+                                    <td className="py-3">{item.carga ?? "—"}</td>
+                                    <td className="py-3">{item.descanso_segundos ? `${item.descanso_segundos}s` : "Livre"}</td>
+                                    <td className="py-3">{item.observacoes ?? "—"}</td>
+                                  </tr>
+                                );
+                              })}
+                            </tbody>
+                          </table>
+                        ) : (
+                          <div className="mt-4 rounded-2xl border border-dashed border-slate-200 p-4 text-sm text-slate-500">
+                            Nenhum exercicio cadastrado neste treino.
+                          </div>
+                        )}
+                      </div>
+                    ) : (
+                      <div className="rounded-3xl border border-dashed border-slate-200 p-6 text-center text-slate-500">
+                        Nenhum treino cadastrado nesta ficha.
+                      </div>
+                    )}
+                  </section>
+
+                  <footer className="mt-10 border-t border-slate-200 pt-4 text-[11px] uppercase tracking-[0.3em] text-slate-400">
+                    {ficha?.id ? `Link da ficha: https://meushape.app/fichas/${ficha.id}` : "Ficha gerada no MEU SHAPE"}
+                  </footer>
+                </div>
+              </div>
+            );
+          });
+        })()}
+      </div>
+      {completionModal.open
+        ? modalTarget
+          ? createPortal(
+              <div
+                className="fixed inset-0 z-[1500] grid place-items-center bg-black/70 px-4"
+                onClick={() => setCompletionModal({ open: false, treinoNome: "", volumeTotal: null })}
+              >
+                <div
+                  className="w-full max-w-md overflow-auto rounded-[28px] border border-white/15 bg-slate-900/95 p-6 text-white shadow-2xl max-h-[90vh]"
+                  onClick={(event) => event.stopPropagation()}
+                >
+                  <p className="text-xs font-semibold uppercase tracking-[0.35em] text-white/60">Treino concluido</p>
+                  <h2 className="mt-3 text-2xl font-semibold">{completionModal.treinoNome || "Treino concluido"}</h2>
+                <div className="mt-4 rounded-2xl border border-white/10 bg-white/5 px-4 py-3">
+                  <p className="text-[11px] uppercase tracking-[0.3em] text-white/60">Volume total</p>
+                  <p className="mt-2 text-3xl font-semibold text-[#67FF9A]">
+                    {completionModal.volumeTotal != null ? `${Math.round(completionModal.volumeTotal)} kg` : "—"}
+                  </p>
+                </div>
+                <div className="mt-4 grid gap-3 sm:grid-cols-3">
+                  <div className="rounded-2xl border border-white/10 bg-white/5 px-4 py-3">
+                    <p className="text-[10px] uppercase tracking-[0.3em] text-white/60">Series</p>
+                    <p className="mt-2 text-xl font-semibold text-white">
+                      {completionModal.totalSeries != null ? completionModal.totalSeries : "—"}
+                    </p>
+                  </div>
+                  <div className="rounded-2xl border border-white/10 bg-white/5 px-4 py-3">
+                    <p className="text-[10px] uppercase tracking-[0.3em] text-white/60">Repeticoes</p>
+                    <p className="mt-2 text-xl font-semibold text-white">
+                      {completionModal.totalRepeticoes != null ? completionModal.totalRepeticoes : "—"}
+                    </p>
+                  </div>
+                  <div className="rounded-2xl border border-white/10 bg-white/5 px-4 py-3">
+                    <p className="text-[10px] uppercase tracking-[0.3em] text-white/60">Exercicios</p>
+                    <p className="mt-2 text-xl font-semibold text-white">
+                      {completionModal.totalExercicios != null ? completionModal.totalExercicios : "—"}
+                    </p>
+                  </div>
+                </div>
+                <p className="mt-4 text-sm text-white/75">Excelente trabalho.</p>
+                  <div className="mt-6 flex flex-wrap gap-3">
+                    <button
+                      type="button"
+                      onClick={() => setCompletionModal({ open: false, treinoNome: "", volumeTotal: null })}
+                      className="flex-1 rounded-2xl border border-white/30 px-4 py-2 text-sm font-semibold text-white transition hover:border-white/60"
+                    >
+                      Fechar
+                    </button>
+                  </div>
+                </div>
+              </div>,
+              modalTarget,
+            )
+          : (
+            <div
+              className="fixed inset-0 z-[1500] grid place-items-center bg-black/70 px-4"
+              onClick={() => setCompletionModal({ open: false, treinoNome: "", volumeTotal: null })}
+            >
+              <div
+                className="w-full max-w-md overflow-auto rounded-[28px] border border-white/15 bg-slate-900/95 p-6 text-white shadow-2xl max-h-[90vh]"
+                onClick={(event) => event.stopPropagation()}
+              >
+                <p className="text-xs font-semibold uppercase tracking-[0.35em] text-white/60">Treino concluido</p>
+                <h2 className="mt-3 text-2xl font-semibold">{completionModal.treinoNome || "Treino concluido"}</h2>
+                <div className="mt-4 rounded-2xl border border-white/10 bg-white/5 px-4 py-3">
+                  <p className="text-[11px] uppercase tracking-[0.3em] text-white/60">Volume total</p>
+                  <p className="mt-2 text-3xl font-semibold text-[#67FF9A]">
+                    {completionModal.volumeTotal != null ? `${Math.round(completionModal.volumeTotal)} kg` : "—"}
+                  </p>
+                </div>
+                <div className="mt-4 grid gap-3 sm:grid-cols-3">
+                  <div className="rounded-2xl border border-white/10 bg-white/5 px-4 py-3">
+                    <p className="text-[10px] uppercase tracking-[0.3em] text-white/60">Series</p>
+                    <p className="mt-2 text-xl font-semibold text-white">
+                      {completionModal.totalSeries != null ? completionModal.totalSeries : "—"}
+                    </p>
+                  </div>
+                  <div className="rounded-2xl border border-white/10 bg-white/5 px-4 py-3">
+                    <p className="text-[10px] uppercase tracking-[0.3em] text-white/60">Repeticoes</p>
+                    <p className="mt-2 text-xl font-semibold text-white">
+                      {completionModal.totalRepeticoes != null ? completionModal.totalRepeticoes : "—"}
+                    </p>
+                  </div>
+                  <div className="rounded-2xl border border-white/10 bg-white/5 px-4 py-3">
+                    <p className="text-[10px] uppercase tracking-[0.3em] text-white/60">Exercicios</p>
+                    <p className="mt-2 text-xl font-semibold text-white">
+                      {completionModal.totalExercicios != null ? completionModal.totalExercicios : "—"}
+                    </p>
+                  </div>
+                </div>
+                <p className="mt-4 text-sm text-white/75">Excelente trabalho.</p>
+                <div className="mt-6 flex flex-wrap gap-3">
+                  <button
+                    type="button"
+                    onClick={() => setCompletionModal({ open: false, treinoNome: "", volumeTotal: null })}
+                    className="flex-1 rounded-2xl border border-white/30 px-4 py-2 text-sm font-semibold text-white transition hover:border-white/60"
+                  >
+                    Fechar
+                  </button>
+                </div>
+              </div>
+            </div>
+          )
+        : null}
+      {deleteDialogOpen
+        ? modalTarget
+          ? createPortal(
+              <div className="fixed inset-0 z-[1500] grid place-items-center bg-black/70 px-4">
+                <div className="w-full max-w-md overflow-auto rounded-[28px] border border-white/15 bg-slate-900/95 p-6 text-white shadow-2xl max-h-[90vh]">
+                  <p className="text-xs font-semibold uppercase tracking-[0.35em] text-white/60">Confirmar exclusao</p>
+                  <h2 className="mt-3 text-2xl font-semibold">Excluir ficha?</h2>
+                  <p className="mt-2 text-sm text-white/75">
+                    Esta acao e permanente e removera os treinos e exercicios vinculados.
+                  </p>
+                  <div className="mt-6 flex flex-wrap gap-3">
+                    <button
+                      type="button"
+                      onClick={() => setDeleteDialogOpen(false)}
+                      disabled={deleteStatus === "loading"}
+                      className="flex-1 rounded-2xl border border-white/30 px-4 py-2 text-sm font-semibold text-white transition hover:border-white/60 disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      Cancelar
+                    </button>
+                    <button
+                      type="button"
+                      onClick={handleDeleteFicha}
+                      disabled={deleteStatus === "loading"}
+                      className="flex-1 rounded-2xl border border-rose-300/60 bg-rose-500/10 px-4 py-2 text-sm font-semibold text-rose-100 transition hover:border-rose-200 hover:text-rose-50 disabled:cursor-not-allowed disabled:opacity-60"
+                    >
+                      {deleteStatus === "loading" ? "Excluindo..." : "Excluir ficha"}
+                    </button>
+                  </div>
+                </div>
+              </div>,
+              modalTarget,
+            )
+          : (
+            <div className="fixed inset-0 z-[1500] grid place-items-center bg-black/70 px-4">
+              <div className="w-full max-w-md overflow-auto rounded-[28px] border border-white/15 bg-slate-900/95 p-6 text-white shadow-2xl max-h-[90vh]">
+                <p className="text-xs font-semibold uppercase tracking-[0.35em] text-white/60">Confirmar exclusao</p>
+                <h2 className="mt-3 text-2xl font-semibold">Excluir ficha?</h2>
+                <p className="mt-2 text-sm text-white/75">
+                  Esta acao e permanente e removera os treinos e exercicios vinculados.
+                </p>
+                <div className="mt-6 flex flex-wrap gap-3">
+                  <button
+                    type="button"
+                    onClick={() => setDeleteDialogOpen(false)}
+                    disabled={deleteStatus === "loading"}
+                    className="flex-1 rounded-2xl border border-white/30 px-4 py-2 text-sm font-semibold text-white transition hover:border-white/60 disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    Cancelar
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleDeleteFicha}
+                    disabled={deleteStatus === "loading"}
+                    className="flex-1 rounded-2xl border border-rose-300/60 bg-rose-500/10 px-4 py-2 text-sm font-semibold text-rose-100 transition hover:border-rose-200 hover:text-rose-50 disabled:cursor-not-allowed disabled:opacity-60"
+                  >
+                    {deleteStatus === "loading" ? "Excluindo..." : "Excluir ficha"}
+                  </button>
+                </div>
+              </div>
+            </div>
+          )
+        : null}
       <div className="flex flex-wrap items-center gap-3">
         <button
           type="button"
-          onClick={() => navigate(-1)}
-          className="inline-flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.3em] text-[rgb(var(--text-secondary))]"
+      onClick={() => navigate(-1)}
+      className="inline-flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.3em] text-[rgb(var(--text-secondary))]"
+    >
+      Voltar
+    </button>
+    {isOwner && (
+      <>
+        <button
+          type="button"
+          onClick={handleEditFicha}
+          className="inline-flex items-center gap-2 rounded-2xl border border-white/40 px-4 py-2 text-xs font-semibold uppercase tracking-[0.25em] text-white transition hover:border-white/80"
         >
-          Voltar
+          Editar ficha
         </button>
-        {isOwner && (
-          <button
-            type="button"
-            onClick={handleEditFicha}
-            className="inline-flex items-center gap-2 rounded-2xl border border-white/40 px-4 py-2 text-xs font-semibold uppercase tracking-[0.25em] text-white transition hover:border-white/80"
-          >
-            Editar ficha
-          </button>
-        )}
-      </div>
+        <button
+          type="button"
+          onClick={() => setDeleteDialogOpen(true)}
+          disabled={deleteStatus === "loading"}
+          className="inline-flex items-center gap-2 rounded-2xl border border-rose-300/60 px-4 py-2 text-xs font-semibold uppercase tracking-[0.25em] text-rose-100 transition hover:border-rose-200 hover:text-rose-50 disabled:cursor-not-allowed disabled:opacity-60"
+        >
+          {deleteStatus === "loading" ? "Excluindo..." : "Excluir ficha"}
+        </button>
+      </>
+    )}
+  </div>
 
       {loading && (
         <section className="rounded-[32px] border border-white/10 bg-gradient-to-br from-[#050914] via-[#0f1f3c] to-[#0f172a] p-10 text-white shadow-2xl">
@@ -220,13 +1345,32 @@ export default function FichaDetailsPage() {
                   >
                     Usar esta ficha
                   </button>
+                  <button
+                    type="button"
+                    onClick={handleExportPdf}
+                    disabled={exportState.loading || !ficha}
+                    className="inline-flex items-center gap-2 rounded-2xl border border-[#0f1f3c]/40 px-5 py-3 text-sm font-semibold text-[#0f1f3c] transition hover:border-[#32C5FF] hover:text-[#32C5FF] disabled:cursor-not-allowed disabled:border-white/30 disabled:text-white/40 dark:border-white/40 dark:text-white dark:hover:border-[#67FF9A] dark:hover:text-[#67FF9A]"
+                  >
+                    <FileDown className="h-4 w-4" />
+                    {exportState.loading ? "Gerando PDF..." : "Exportar PDF"}
+                  </button>
                   {isOwner ? (
-                    <Link
-                      to={`/fichas/${ficha.id}/editar`}
-                      className="rounded-2xl border border-white/30 px-5 py-3 text-sm font-semibold text-white transition hover:border-white/60"
-                    >
-                      Editar ficha
-                    </Link>
+                    <>
+                      <Link
+                        to={`/fichas/${ficha.id}/editar`}
+                        className="rounded-2xl border border-white/30 px-5 py-3 text-sm font-semibold text-white transition hover:border-white/60"
+                      >
+                        Editar ficha
+                      </Link>
+                      <button
+                        type="button"
+                        onClick={() => setDeleteDialogOpen(true)}
+                        disabled={deleteStatus === "loading"}
+                        className="rounded-2xl border border-rose-300/60 px-5 py-3 text-sm font-semibold text-rose-100 transition hover:border-rose-200 hover:text-rose-50 disabled:cursor-not-allowed disabled:opacity-60"
+                      >
+                        {deleteStatus === "loading" ? "Excluindo..." : "Excluir ficha"}
+                      </button>
+                    </>
                   ) : (
                     <button className="rounded-2xl border border-white/30 px-5 py-3 text-sm font-semibold text-white transition hover:border-white/60">
                       Duplicar para minha conta
@@ -241,9 +1385,66 @@ export default function FichaDetailsPage() {
                   alt={ficha.nome}
                   className="h-64 w-full rounded-3xl border border-white/10 object-cover"
                 />
-                <p className="mt-4 text-sm text-white/70">
-                  Atualize as midias desta ficha direto no Supabase (campos `thumbnail_url` e `capa_url`) para melhorar a apresentacao no catalogo.
-                </p>
+                {isOwner ? (
+                  <div className="mt-4 grid gap-2 sm:grid-cols-3">
+                    <label className="inline-flex cursor-pointer items-center justify-center gap-2 rounded-2xl border border-[#32C5FF]/50 px-4 py-2 text-xs font-semibold uppercase tracking-[0.25em] text-[#32C5FF] transition hover:border-[#32C5FF] hover:bg-[#32C5FF]/10">
+                      <Upload className="h-4 w-4" />
+                      {mediaUploading.thumbnail ? "Enviando..." : "Enviar thumbnail"}
+                      <input
+                        type="file"
+                        accept="image/*"
+                        className="hidden"
+                        onChange={(event) => handleUploadMidia(event, "thumbnail")}
+                        disabled={mediaUploading.thumbnail}
+                      />
+                    </label>
+                    <label className="inline-flex items-center justify-center gap-2 rounded-2xl border border-white/30 bg-white/10 px-3 py-2 text-[10px] font-semibold uppercase tracking-[0.25em] text-white/70">
+                      Estilo
+                      <select
+                        value={aiThumbnailStyle}
+                        onChange={(event) => setAiThumbnailStyle(event.target.value)}
+                        disabled={aiThumbnailGenerating}
+                        className="rounded-lg border border-white/40 bg-white/20 px-2 py-1 text-[10px] font-semibold text-white/90 outline-none transition focus:border-white/70"
+                      >
+                        <option value="clean">Clean</option>
+                        <option value="cyber">Cyber</option>
+                        <option value="cyberpunk">Cyberpunk</option>
+                        <option value="neon">Neon</option>
+                        <option value="minimal">Minimal</option>
+                        <option value="anime">Anime</option>
+                        <option value="cartoon">Cartoon</option>
+                        <option value="ghible">Ghible</option>
+                        <option value="pintura">Pintura</option>
+                        <option value="vaporwave">Vaporwave</option>
+                        <option value="comic">Comic</option>
+                      </select>
+                    </label>
+                    <button
+                      type="button"
+                      onClick={handleGenerateThumbnail}
+                      disabled={aiThumbnailGenerating || mediaUploading.thumbnail}
+                      className="inline-flex items-center justify-center gap-2 rounded-2xl border border-[#F5B759]/60 px-4 py-2 text-xs font-semibold uppercase tracking-[0.25em] text-[#F5B759] transition hover:border-[#F5B759] hover:bg-[#F5B759]/10 disabled:cursor-not-allowed disabled:opacity-60"
+                    >
+                      <Sparkles className="h-4 w-4" />
+                      {aiThumbnailGenerating ? "Gerando..." : "Gerar com IA"}
+                    </button>
+                    <label className="inline-flex cursor-pointer items-center justify-center gap-2 rounded-2xl border border-[#67FF9A]/50 px-4 py-2 text-xs font-semibold uppercase tracking-[0.25em] text-[#67FF9A] transition hover:border-[#67FF9A] hover:bg-[#67FF9A]/10">
+                      <Upload className="h-4 w-4" />
+                      {mediaUploading.capa ? "Enviando..." : "Enviar capa"}
+                      <input
+                        type="file"
+                        accept="image/*"
+                        className="hidden"
+                        onChange={(event) => handleUploadMidia(event, "capa")}
+                        disabled={mediaUploading.capa}
+                      />
+                    </label>
+                  </div>
+                ) : (
+                  <p className="mt-4 text-sm text-white/70">
+                    Atualize as midias desta ficha direto no Supabase (campos `thumbnail_url` e `capa_url`) para melhorar a apresentacao no catalogo.
+                  </p>
+                )}
                 <div className="mt-4 rounded-2xl border border-white/15 bg-white/10 p-4 text-xs text-white/70">
                   <p className="font-semibold text-white">ID da ficha</p>
                   <p className="mt-1 break-all text-white/80">{ficha.id}</p>
@@ -299,23 +1500,63 @@ export default function FichaDetailsPage() {
                 const treinoReferencia = subdivisaoTitulo ? `${subdivisaoTitulo} · ${tituloPrincipal}` : tituloPrincipal;
                 return (
                   <div key={treino.id} className="mb-8 last:mb-0">
-                    <div className="mb-3">
-                      {subdivisaoTitulo ? (
-                        <p className="text-xs font-semibold uppercase tracking-[0.35em] text-[rgb(var(--text-secondary))]">
-                          {subdivisaoTitulo}
-                        </p>
-                      ) : null}
-                      <h3 className="text-xl font-semibold text-[rgb(var(--text-primary))]">{tituloPrincipal}</h3>
-                      {treino.descricao ? (
-                        <p className="text-sm text-[rgb(var(--text-secondary))]">{treino.descricao}</p>
-                      ) : null}
+                    <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
+                      <div>
+                        {subdivisaoTitulo ? (
+                          <p className="text-xs font-semibold uppercase tracking-[0.35em] text-[rgb(var(--text-secondary))]">
+                            {subdivisaoTitulo}
+                          </p>
+                        ) : null}
+                        <h3 className="text-xl font-semibold text-[rgb(var(--text-primary))]">{tituloPrincipal}</h3>
+                        {treino.descricao ? (
+                          <p className="text-sm text-[rgb(var(--text-secondary))]">{treino.descricao}</p>
+                        ) : null}
+                      </div>
+                      <div className="flex flex-wrap items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={() => handleShareTreino(treino)}
+                          disabled={shareState.loading && shareState.treino?.id === treino.id}
+                          className="inline-flex items-center gap-2 rounded-2xl border border-[rgba(103,255,154,0.4)] px-4 py-2 text-xs font-semibold uppercase tracking-[0.25em] text-[#67FF9A] transition hover:border-[rgba(103,255,154,0.7)] hover:text-white disabled:cursor-not-allowed disabled:opacity-60"
+                        >
+                          <Share2 className="h-4 w-4" />
+                          {shareState.loading && shareState.treino?.id === treino.id ? "Gerando..." : "Compartilhar"}
+                        </button>
+                        <label className="flex items-center gap-2 rounded-2xl border border-white/30 bg-white/10 px-3 py-2 text-[10px] font-semibold uppercase tracking-[0.25em] text-white/70">
+                          Data
+                          <input
+                            type="date"
+                            value={getCompletionDate(treino.id)}
+                            onChange={(event) => handleCompletionDateChange(treino.id, event.target.value)}
+                            className="rounded-lg border border-white/40 bg-white/20 px-2 py-1 text-[10px] font-semibold text-white/90 outline-none transition focus:border-white/70"
+                          />
+                        </label>
+                        <button
+                          type="button"
+                          onClick={() => handleCompleteTreino(treino)}
+                          disabled={!user?.id || completeStatus[treino.id] === "saving"}
+                          className="inline-flex items-center gap-2 rounded-2xl bg-gradient-to-r from-[#67FF9A] to-[#32C5FF] px-4 py-2 text-xs font-semibold uppercase tracking-[0.25em] text-[#041220] shadow-sm transition hover:scale-[1.01] disabled:cursor-not-allowed disabled:opacity-60"
+                        >
+                          {completeStatus[treino.id] === "ok" ? "Treino concluido" : "Registrar conclusão"}
+                        </button>
+                        {completeStatus[treino.id] === "ok" ? (
+                          <span className="text-[11px] font-semibold text-emerald-500">✔ salvo</span>
+                        ) : null}
+                        {!user?.id ? (
+                          <span className="text-[11px] text-[rgb(var(--text-secondary))]">Entre para registrar</span>
+                        ) : null}
+                      </div>
                     </div>
                     {Array.isArray(treino.ficha_exercicios) && treino.ficha_exercicios.length > 0 ? (
                       <FichaExercisesTable
+                        treinoId={treino.id}
                         exercicios={treino.ficha_exercicios}
                         userId={user?.id ?? null}
-                        onRegisterExecution={handleRegisterExecution}
+                        onRegisterExecution={(exercise, payload) =>
+                          handleRegisterExecution(exercise, payload, getCompletionDate(treino.id))
+                        }
                         registerStatus={registerStatus}
+                        onMetricsChange={handleMetricsChange}
                       />
                     ) : (
                       <div className="rounded-2xl border border-dashed border-white/40 p-6 text-center text-[rgb(var(--text-secondary))] dark:border-slate-800">
@@ -338,9 +1579,17 @@ export default function FichaDetailsPage() {
   );
 }
 
-function FichaExercisesTable({ exercicios = [], userId = null, onRegisterExecution = null, registerStatus = {} }) {
+function FichaExercisesTable({
+  treinoId = null,
+  exercicios = [],
+  userId = null,
+  onRegisterExecution = null,
+  registerStatus = {},
+  onMetricsChange = null,
+}) {
   const items = Array.isArray(exercicios) ? exercicios : [];
   const [timerModal, setTimerModal] = useState(createEmptyTimerState);
+  const [videoModal, setVideoModal] = useState({ open: false, url: null, title: "" });
   const audioRef = useRef(null);
   const audioPlayedRef = useRef(false);
   const [portalTarget, setPortalTarget] = useState(null);
@@ -369,6 +1618,38 @@ function FichaExercisesTable({ exercicios = [], userId = null, onRegisterExecuti
       }, {}),
     );
   }, [items]);
+
+  useEffect(() => {
+    if (!treinoId || typeof onMetricsChange !== "function") return;
+    const totalSeries = items.reduce((acc, item) => {
+      const series = parseNumberValue(item.series);
+      return series ? acc + series : acc;
+    }, 0);
+    const totalRepeticoes = items.reduce((acc, item) => {
+      const series = parseNumberValue(item.series);
+      const repeticoes = parseNumberValue(item.repeticoes);
+      if (!series || !repeticoes) return acc;
+      return acc + series * repeticoes;
+    }, 0);
+    const volumeTotal = items.reduce((acc, item) => {
+      const carga =
+        parseNumberValue(loadValues[item.id]) ??
+        parseNumberValue(item.carga) ??
+        parseNumberValue(item.carga_sugerida) ??
+        parseNumberValue(item.carga_prescrita);
+      if (!carga || carga <= 0) return acc;
+      const series = parseNumberValue(item.series);
+      const repeticoes = parseNumberValue(item.repeticoes);
+      if (!series || !repeticoes) return acc;
+      return acc + carga * series * repeticoes;
+    }, 0);
+    onMetricsChange(treinoId, {
+      volumeTotal,
+      totalSeries,
+      totalRepeticoes,
+      totalExercicios: items.length,
+    });
+  }, [items, loadValues, onMetricsChange, treinoId]);
 
   useEffect(() => {
     if (!userId || items.length === 0) {
@@ -514,6 +1795,15 @@ function FichaExercisesTable({ exercicios = [], userId = null, onRegisterExecuti
     setTimerModal(createEmptyTimerState());
   }, []);
 
+  const openVideoModal = useCallback((videoUrl, title) => {
+    if (!videoUrl) return;
+    setVideoModal({ open: true, url: videoUrl, title: title ?? "Video do exercicio" });
+  }, []);
+
+  const closeVideoModal = useCallback(() => {
+    setVideoModal({ open: false, url: null, title: "" });
+  }, []);
+
   const restartTimer = useCallback(() => {
     setTimerModal((prev) => {
       if (!prev.duration) return prev;
@@ -568,11 +1858,18 @@ function FichaExercisesTable({ exercicios = [], userId = null, onRegisterExecuti
   }, [timerModal.open, timerModal.secondsLeft, timerModal.audioUrl]);
 
   return (
-    <div className="overflow-x-auto rounded-[28px] border border-white/20 bg-white/70 shadow-inner dark:border-slate-700 dark:bg-slate-900/70">
-      <table className="min-w-full text-sm">
+    <div className="space-y-3">
+      <div className="hidden overflow-x-auto rounded-[28px] border border-white/20 bg-white/70 shadow-inner dark:border-slate-700 dark:bg-slate-900/70 md:block">
+        <table className="min-w-full text-sm">
         <thead className="bg-white/80 text-left text-xs uppercase tracking-[0.2em] text-[rgb(var(--text-secondary))] dark:bg-slate-900/40">
           <tr>
-            <th className="px-4 py-3">Cronometro</th>
+            <th className="px-4 py-3 text-center">
+              <Clock3
+                className="mx-auto h-4 w-4 text-[rgb(var(--text-secondary))] dark:text-white/70"
+                aria-label="Cronômetro"
+              />
+              <span className="sr-only">Cronômetro</span>
+            </th>
             <th className="px-4 py-3">Exercicio</th>
           <th className="px-4 py-3">Series</th>
           <th className="px-4 py-3">Repeticoes</th>
@@ -588,25 +1885,41 @@ function FichaExercisesTable({ exercicios = [], userId = null, onRegisterExecuti
             const parsedRest = Number(item.descanso_segundos);
             const hasRestTime = Number.isFinite(parsedRest) && parsedRest > 0;
             const restSeconds = hasRestTime ? parsedRest : null;
+            const isDone = registerStatus[item.id] === "ok";
 
             return (
-              <tr key={item.id} className="border-t border-white/40 text-[rgb(var(--text-primary))] dark:border-slate-800">
+              <tr
+                key={item.id}
+                className={`border-t border-white/40 text-[rgb(var(--text-primary))] dark:border-slate-800 ${
+                  isDone ? "bg-emerald-50/70 opacity-80 dark:bg-emerald-500/10" : ""
+                }`}
+              >
                 <td className="px-4 py-3">
                   <button
                     type="button"
                     onClick={() => startTimer(exercicioMeta?.nome ?? "Exercicio", restSeconds)}
                     disabled={!restSeconds}
-                    className={`inline-flex w-full items-center justify-center gap-2 rounded-2xl border px-3 py-2 text-xs font-semibold uppercase tracking-[0.2em] transition ${
+                    className={`inline-flex w-full items-center justify-center rounded-2xl border px-3 py-2 transition ${
                       restSeconds
-                        ? "border-[#32C5FF]/60 text-[#032840] hover:border-[#32C5FF] hover:bg-[#32C5FF]/10"
+                        ? "border-[#32C5FF]/60 bg-white/80 text-[#032840] hover:border-[#32C5FF] hover:bg-[#32C5FF]/10 dark:border-[#67FF9A]/70 dark:bg-white/5 dark:text-[#67FF9A] dark:hover:bg-[#67FF9A]/10"
                         : "cursor-not-allowed border-white/30 text-[rgb(var(--text-secondary))]"
-                    }`}
+                    } disabled:opacity-60`}
+                    aria-label={restSeconds ? `Iniciar cronometro de ${restSeconds}s` : "Definir descanso"}
+                    title={restSeconds ? `Iniciar ${restSeconds}s` : "Definir descanso"}
                   >
-                    {restSeconds ? `Iniciar ${restSeconds}s` : "Definir descanso"}
+                    <Clock3 className="h-4 w-4" />
                   </button>
                 </td>
                 <td className="px-4 py-3">
-                  <p className="font-semibold">{exercicioMeta?.nome ?? "Exercicio sem nome"}</p>
+                  <div className="flex items-center gap-2">
+                    <p className="font-semibold">{exercicioMeta?.nome ?? "Exercicio sem nome"}</p>
+                    {isDone ? (
+                      <span className="inline-flex items-center gap-1 rounded-full bg-emerald-500/15 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.2em] text-emerald-500">
+                        <CheckCircle2 className="h-3 w-3" />
+                        Concluido
+                      </span>
+                    ) : null}
+                  </div>
                   <p className="text-xs text-[rgb(var(--text-secondary))]">
                     {exercicioMeta?.grupo ?? "Grupo livre"}
                     {exercicioMeta?.equipamento ? ` - ${exercicioMeta.equipamento}` : ""}
@@ -655,15 +1968,13 @@ function FichaExercisesTable({ exercicios = [], userId = null, onRegisterExecuti
               <td className="px-4 py-3 text-sm text-[rgb(var(--text-secondary))]">{item.observacoes ?? "—"}</td>
               <td className="px-4 py-3 text-right">
                 {exercicioMeta?.video_url ? (
-                  <a
-                    href={exercicioMeta.video_url}
-                    target="_blank"
-                    rel="noreferrer"
+                  <button
+                    type="button"
+                    onClick={() => openVideoModal(exercicioMeta.video_url, exercicioMeta?.nome)}
                     className="inline-flex items-center gap-1 rounded-full border border-[#32C5FF] px-3 py-1 text-xs font-semibold text-[#32C5FF] transition hover:bg-[#32C5FF]/10"
                   >
                     Ver video
-                    <span aria-hidden="true">↗</span>
-                  </a>
+                  </button>
                 ) : (
                   <span className="text-xs text-[rgb(var(--text-secondary))]">Sem video</span>
                 )}
@@ -686,7 +1997,7 @@ function FichaExercisesTable({ exercicios = [], userId = null, onRegisterExecuti
                   {registerStatus[item.id] === "ok" ? (
                     <span className="inline-flex items-center gap-1 text-[11px] text-emerald-400">
                       <CheckCircle2 className="h-3.5 w-3.5" />
-                      Registrado
+                      Concluido
                     </span>
                   ) : null}
                   {!userId ? (
@@ -698,7 +2009,152 @@ function FichaExercisesTable({ exercicios = [], userId = null, onRegisterExecuti
             );
           })}
         </tbody>
-      </table>
+        </table>
+      </div>
+
+      <div className="space-y-3 md:hidden">
+        {items.map((item) => {
+          const exercicioMeta = item.exercicios ?? item.exercicio ?? {};
+          const parsedRest = Number(item.descanso_segundos);
+          const hasRestTime = Number.isFinite(parsedRest) && parsedRest > 0;
+          const restSeconds = hasRestTime ? parsedRest : null;
+          const isDone = registerStatus[item.id] === "ok";
+
+          return (
+            <div
+              key={item.id}
+              className={`rounded-[24px] border border-white/30 bg-white/80 p-4 text-[rgb(var(--text-primary))] shadow-sm dark:border-slate-800 dark:bg-slate-900/80 ${
+                isDone ? "border-emerald-400/40 bg-emerald-50/70 opacity-80 dark:bg-emerald-500/10" : ""
+              }`}
+            >
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <div className="flex items-center gap-2">
+                    <p className="text-base font-semibold">{exercicioMeta?.nome ?? "Exercicio sem nome"}</p>
+                    {isDone ? (
+                      <span className="inline-flex items-center gap-1 rounded-full bg-emerald-500/15 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.2em] text-emerald-500">
+                        <CheckCircle2 className="h-3 w-3" />
+                        Concluido
+                      </span>
+                    ) : null}
+                  </div>
+                  <p className="text-xs text-[rgb(var(--text-secondary))]">
+                    {exercicioMeta?.grupo ?? "Grupo livre"}
+                    {exercicioMeta?.equipamento ? ` · ${exercicioMeta.equipamento}` : ""}
+                  </p>
+                  <p className="text-[11px] text-[rgb(var(--text-secondary))]">
+                    {restSeconds ? `Descanso: ${restSeconds}s` : "Defina um descanso"}
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => startTimer(exercicioMeta?.nome ?? "Exercicio", restSeconds)}
+                  disabled={!restSeconds}
+                  className={`inline-flex items-center justify-center rounded-xl border px-3 py-2 transition ${
+                    restSeconds
+                      ? "border-[#32C5FF]/60 bg-white/80 text-[#032840] hover:border-[#32C5FF] hover:bg-[#32C5FF]/10 dark:border-[#67FF9A]/70 dark:bg-white/5 dark:text-[#67FF9A] dark:hover:bg-[#67FF9A]/10"
+                      : "cursor-not-allowed border-white/30 text-[rgb(var(--text-secondary))]"
+                  } disabled:opacity-60`}
+                  aria-label={restSeconds ? `Iniciar cronometro de ${restSeconds}s` : "Definir descanso"}
+                  title={restSeconds ? `Iniciar ${restSeconds}s` : "Definir descanso"}
+                >
+                  <Clock3 className="h-4 w-4" />
+                </button>
+              </div>
+
+              <div className="mt-3 grid grid-cols-2 gap-2 text-sm">
+                <div className="rounded-xl border border-white/40 bg-white/60 px-3 py-2 dark:border-slate-800 dark:bg-slate-900/60">
+                  <p className="text-[10px] uppercase tracking-[0.25em] text-[rgb(var(--text-secondary))]">Series</p>
+                  <p className="text-base font-semibold">{item.series ?? "—"}</p>
+                </div>
+                <div className="rounded-xl border border-white/40 bg-white/60 px-3 py-2 dark:border-slate-800 dark:bg-slate-900/60">
+                  <p className="text-[10px] uppercase tracking-[0.25em] text-[rgb(var(--text-secondary))]">Repeticoes</p>
+                  <p className="text-base font-semibold">{item.repeticoes ?? "—"}</p>
+                </div>
+              </div>
+
+              <div className="mt-3">
+                <div className="flex items-center gap-2">
+                  <input
+                    type="text"
+                    inputMode="decimal"
+                    value={loadValues[item.id] ?? ""}
+                    onChange={(event) => handleLoadChange(item, event.target.value)}
+                    onBlur={() => saveLoad(item)}
+                    onKeyDown={(event) => {
+                      if (event.key === "Enter") {
+                        event.preventDefault();
+                        saveLoad(item);
+                      }
+                    }}
+                    className="w-full rounded-lg border border-white/40 bg-white/80 px-3 py-2 text-sm text-[rgb(var(--text-primary))] outline-none transition focus:border-[#32C5FF] dark:border-slate-800 dark:bg-slate-900 dark:text-white"
+                    placeholder="Carga"
+                    disabled={savingLoad[item.id]}
+                  />
+                  <span className="text-xs text-[rgb(var(--text-secondary))]">kg</span>
+                </div>
+                {(() => {
+                  const suggestion = suggestions[item.exercicio_id ?? item.exercicio?.id];
+                  if (!suggestion?.suggestedLoad) return null;
+                  const basisLabel =
+                    suggestion.basis === "history"
+                      ? "histórico recente"
+                      : suggestion.basis === "pr"
+                        ? "PR ajustado"
+                        : "sugestão";
+                  return (
+                    <p className="mt-1 text-[11px] text-[rgb(var(--text-secondary))]">
+                      Sugestão: {suggestion.suggestedLoad} kg ({basisLabel}
+                      {suggestion.target?.max ? ` · alvo ${suggestion.target.min || ""}-${suggestion.target.max} reps` : ""})
+                    </p>
+                  );
+                })()}
+              </div>
+
+              <p className="mt-3 text-sm text-[rgb(var(--text-secondary))]">{item.observacoes ?? "Sem observacoes"}</p>
+
+              <div className="mt-4 flex flex-wrap items-center gap-2">
+                {exercicioMeta?.video_url ? (
+                  <button
+                    type="button"
+                    onClick={() => openVideoModal(exercicioMeta.video_url, exercicioMeta?.nome)}
+                    className="inline-flex items-center gap-1 rounded-full border border-[#32C5FF] px-3 py-1 text-xs font-semibold text-[#32C5FF] transition hover:bg-[#32C5FF]/10"
+                  >
+                    Ver video
+                  </button>
+                ) : (
+                  <span className="text-xs text-[rgb(var(--text-secondary))]">Sem video</span>
+                )}
+                <button
+                  type="button"
+                  onClick={() =>
+                    onRegisterExecution?.(item, {
+                      series: item.series ?? null,
+                      repeticoes: item.repeticoes ?? null,
+                      carga: loadValues[item.id] ? Number(loadValues[item.id]) : item.carga ?? null,
+                    })
+                  }
+                  disabled={!userId}
+                  className="inline-flex items-center gap-2 rounded-full border border-[#32C5FF]/60 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.25em] text-[#32C5FF] transition hover:border-[#32C5FF] hover:bg-[#32C5FF]/10 disabled:cursor-not-allowed disabled:border-white/20 disabled:text-white/50"
+                >
+                  <Play className="h-3.5 w-3.5" />
+                  Registrar
+                </button>
+                {registerStatus[item.id] === "ok" ? (
+                  <span className="inline-flex items-center gap-1 text-[11px] text-emerald-400">
+                    <CheckCircle2 className="h-3.5 w-3.5" />
+                    Concluido
+                  </span>
+                ) : null}
+                {!userId ? (
+                  <span className="text-[10px] text-[rgb(var(--text-secondary))]">Entre para registrar</span>
+                ) : null}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+
       {loadError ? (
         <p className="px-4 py-2 text-xs text-rose-500 dark:text-rose-300">{loadError}</p>
       ) : null}
@@ -745,6 +2201,38 @@ function FichaExercisesTable({ exercicios = [], userId = null, onRegisterExecuti
                   >
                     Concluir
                   </button>
+                </div>
+              </div>
+            </div>,
+            portalTarget
+          )
+        : null}
+      {videoModal.open && portalTarget
+        ? createPortal(
+            <div className="fixed inset-0 z-[1000] flex items-center justify-center bg-black/75 px-4 py-8">
+              <div className="w-full max-w-3xl overflow-hidden rounded-[32px] border border-white/10 bg-slate-900 text-white shadow-2xl">
+                <div className="flex items-center justify-between border-b border-white/10 px-6 py-4">
+                  <div>
+                    <p className="text-xs font-semibold uppercase tracking-[0.35em] text-white/50">Guia em video</p>
+                    <p className="text-lg font-semibold text-white/90">{videoModal.title || "Exercicio"}</p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={closeVideoModal}
+                    className="rounded-full border border-white/30 px-3 py-1 text-xs font-semibold uppercase tracking-[0.3em] text-white/70 transition hover:border-white/60"
+                  >
+                    Fechar
+                  </button>
+                </div>
+                <div className="bg-black">
+                  <video
+                    key={videoModal.url}
+                    src={videoModal.url}
+                    controls
+                    autoPlay
+                    loop
+                    className="h-full w-full max-h-[70vh] bg-black object-contain"
+                  />
                 </div>
               </div>
             </div>,

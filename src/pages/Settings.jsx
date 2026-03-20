@@ -1,10 +1,24 @@
-import React, { useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import toast from "react-hot-toast";
 import { useAuth } from "../context/AuthContext.jsx";
 import { PLAN_LIST } from "../data/plans.js";
 import { MOBILE_NAV_LINKS, normalizeMobileNavSelection } from "../data/navigation.js";
+import { supabase } from "../lib/supabase.js";
 
-const MOBILE_NAV_LIMIT = 4;
+const MOBILE_NAV_LIMIT = 5;
+const AI_LIMITS_PRO = {
+  fichas_geradas: 8,
+  fotos_analisadas: 186,
+  chat_msgs: 300,
+  insights: 20,
+  relatorios: 10,
+};
+
+const buildMonthKey = () => {
+  const now = new Date();
+  const monthDate = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1, 0, 0, 0));
+  return monthDate.toISOString().slice(0, 10);
+};
 
 export default function SettingsPage() {
   const { user, updateUserMetadata } = useAuth();
@@ -21,6 +35,12 @@ export default function SettingsPage() {
     normalizeMobileNavSelection(metadata.mobile_nav_paths)
   );
   const [mobileNavSaving, setMobileNavSaving] = useState(false);
+  const [aiUsageState, setAiUsageState] = useState({ loading: false, error: null, data: null });
+  const aiMonthKey = useMemo(() => buildMonthKey(), []);
+  const isPro = useMemo(() => {
+    const tier = metadata.subscription_tier ?? metadata.plan ?? "";
+    return ["premium", "pro", "shape pro", "shape_pro", "shapepro", "shape-pro"].includes(String(tier).toLowerCase());
+  }, [metadata.plan, metadata.subscription_tier]);
 
   const handleProfileChange = (field, value) => {
     setProfileForm((prev) => ({ ...prev, [field]: value }));
@@ -71,6 +91,42 @@ export default function SettingsPage() {
     } finally {
       setMobileNavSaving(false);
     }
+  };
+
+  useEffect(() => {
+    let active = true;
+    async function loadAiUsage() {
+      if (!user?.id) {
+        setAiUsageState({ loading: false, error: null, data: null });
+        return;
+      }
+      setAiUsageState((prev) => ({ ...prev, loading: true, error: null }));
+      const { data, error } = await supabase
+        .from("ai_usage_meushape")
+        .select("fichas_geradas, fotos_analisadas, chat_msgs, insights, relatorios")
+        .eq("user_id", user.id)
+        .eq("month", aiMonthKey)
+        .maybeSingle();
+      if (!active) return;
+      if (error) {
+        setAiUsageState({ loading: false, error: error.message, data: null });
+        return;
+      }
+      setAiUsageState({ loading: false, error: null, data });
+    }
+
+    loadAiUsage();
+    return () => {
+      active = false;
+    };
+  }, [aiMonthKey, user?.id]);
+
+  const aiUsage = aiUsageState.data ?? {
+    fichas_geradas: 0,
+    fotos_analisadas: 0,
+    chat_msgs: 0,
+    insights: 0,
+    relatorios: 0,
   };
 
   return (
@@ -251,6 +307,56 @@ export default function SettingsPage() {
             ))}
           </div>
         </article>
+      </section>
+
+      <section className="rounded-[32px] border border-white/30 bg-white/80 p-6 shadow-xl dark:border-slate-800 dark:bg-slate-900/70">
+        <header className="mb-6 space-y-2">
+          <p className="text-xs uppercase tracking-[0.3em] text-[rgb(var(--text-subtle))]">Uso de IA (mensal)</p>
+          <h2 className="text-xl font-semibold text-[rgb(var(--text-primary))]">Limites do seu plano</h2>
+          <p className="text-sm text-[rgb(var(--text-secondary))]">
+            O ciclo reinicia todo mês. Plano Pro libera limites maiores e uso contínuo.
+          </p>
+        </header>
+
+        {aiUsageState.loading ? (
+          <p className="text-sm text-[rgb(var(--text-secondary))]">Carregando uso do mês...</p>
+        ) : null}
+        {aiUsageState.error ? (
+          <p className="text-sm text-[#FF8F8F]">Não foi possível carregar o uso: {aiUsageState.error}</p>
+        ) : null}
+
+        <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+          {[
+            { label: "Fichas inteligentes", key: "fichas_geradas", suffix: "" },
+            { label: "Fotos analisadas", key: "fotos_analisadas", suffix: "" },
+            { label: "Mensagens no coach", key: "chat_msgs", suffix: "" },
+            { label: "Insights IA", key: "insights", suffix: "" },
+            { label: "Relatórios/PDF", key: "relatorios", suffix: "" },
+          ].map((item) => {
+            const limit = AI_LIMITS_PRO[item.key];
+            const current = aiUsage[item.key] ?? 0;
+            const display =
+              isPro ? `${current}/${limit}` : "Disponível no Shape Pro";
+            return (
+              <div
+                key={item.key}
+                className="rounded-3xl border border-white/40 bg-white/70 p-4 text-sm shadow-inner dark:border-slate-800 dark:bg-slate-900/60"
+              >
+                <p className="text-[11px] uppercase tracking-[0.3em] text-[rgb(var(--text-subtle))]">{item.label}</p>
+                <p className="mt-2 text-lg font-semibold text-[rgb(var(--text-primary))]">{display}</p>
+                {isPro ? (
+                  <p className="text-xs text-[rgb(var(--text-secondary))]">
+                    Restante: {Math.max(limit - current, 0)}
+                  </p>
+                ) : (
+                  <p className="text-xs text-[rgb(var(--text-secondary))]">
+                    Faça upgrade para liberar este recurso.
+                  </p>
+                )}
+              </div>
+            );
+          })}
+        </div>
       </section>
     </div>
   );

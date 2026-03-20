@@ -1,4 +1,6 @@
 ﻿import React from "react";
+import { createPortal } from "react-dom";
+import { Link } from "react-router-dom";
 import { PLAN_LIST } from "../data/plans.js";
 import { formatCurrency } from "../utils/formatters.js";
 
@@ -6,6 +8,7 @@ export default function PremiumPlansModal({
   open,
   onClose,
   onSubscribe,
+  onCheckoutPix,
   subscribingPlanId = null,
   hasPremiumAccess = false,
   currentPlanId = "free",
@@ -13,6 +16,8 @@ export default function PremiumPlansModal({
   trialEndsAt = null,
 }) {
   if (!open) return null;
+
+  const portalTarget = typeof document !== "undefined" ? document.body : null;
 
   const trialLabel =
     trialActive && trialEndsAt
@@ -33,7 +38,11 @@ export default function PremiumPlansModal({
     event.stopPropagation();
   };
 
-  return (
+  const handleBenefitsClick = () => {
+    onClose?.();
+  };
+
+  const modalContent = (
     <div
       className="fixed inset-0 z-[90] flex items-center justify-center bg-slate-900/70 px-4 py-10 backdrop-blur"
       onClick={handleRootClick}
@@ -48,7 +57,8 @@ export default function PremiumPlansModal({
         <button
           type="button"
           onClick={handleCloseClick}
-          className="absolute right-5 top-5 inline-flex h-10 w-10 items-center justify-center rounded-full bg-slate-200/60 text-slate-600 transition hover:bg-slate-200 focus:outline-none focus-visible:ring-2 focus-visible:ring-temaSky/40 dark:bg-slate-800/70 dark:text-slate-200 dark:hover:bg-slate-800"
+          onPointerDown={handleCloseClick}
+          className="absolute right-5 top-5 z-10 inline-flex h-10 w-10 items-center justify-center rounded-full bg-slate-200/60 text-slate-600 transition hover:bg-slate-200 focus:outline-none focus-visible:ring-2 focus-visible:ring-temaSky/40 dark:bg-slate-800/70 dark:text-slate-200 dark:hover:bg-slate-800"
           aria-label="Fechar planos"
         >
           <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" className="h-5 w-5">
@@ -81,6 +91,14 @@ export default function PremiumPlansModal({
                 </p>
               </div>
 
+              <Link
+                to="/meu-shape"
+                onClick={handleBenefitsClick}
+                className="inline-flex w-full items-center justify-center rounded-xl bg-gradient-to-r from-[#32C5FF] via-[#0F1F3C] to-[#67FF9A] px-4 py-2.5 text-xs font-semibold uppercase tracking-[0.16em] text-white shadow-lg shadow-[#32C5FF]/30 transition hover:from-[#574de3] hover:to-[#9c784f] dark:from-[#32C5FF] dark:via-[#0F1F3C] dark:to-[#67FF9A]"
+              >
+                Ver beneficios na landing page
+              </Link>
+
               <div className="space-y-2 text-xs text-slate-500 dark:text-slate-400">
                 <p className="font-semibold uppercase tracking-[0.16em] text-slate-700 dark:text-slate-200">Pagamento automático</p>
                 <p>As assinaturas Sóo processadas com Mercado Pago. Você mantém controle total e pode cancelar quando quiser.</p>
@@ -93,6 +111,7 @@ export default function PremiumPlansModal({
                 const priceLabel = `${formatCurrency(plan.price)}/mês`;
                 const isCurrentPlan = currentPlanId === plan.id;
                 const disableAction = isCurrentPlan || typeof onSubscribe !== "function";
+                const isPremiumPlan = plan.id === "premium";
 
                 return (
                 <div
@@ -125,22 +144,55 @@ export default function PremiumPlansModal({
                     </ul>
                   </div>
 
-                  <button
-                    type="button"
-                    onClick={() => onSubscribe?.(plan.id)}
-                    disabled={disableAction || isLoading}
-                    className={`mt-4 inline-flex w-full items-center justify-center rounded-xl px-4 py-2.5 text-sm font-semibold transition ${
-                      disableAction
-                        ? "cursor-not-allowed bg-slate-200 text-slate-500 dark:bg-slate-800 dark:text-slate-400"
-                        : "bg-gradient-to-r from-[#32C5FF] via-[#0F1F3C] to-[#67FF9A] text-white shadow-lg shadow-[#32C5FF]/30 hover:from-[#574de3] hover:to-[#9c784f] disabled:cursor-not-allowed disabled:opacity-75"
-                    }`}
-                  >
-                    {isCurrentPlan
-                      ? "Plano atual"
-                      : isLoading
-                        ? "Conectando ao Mercado Pago..."
-                        : `Assinar ${plan.shortName}`}
-                  </button>
+                  {isPremiumPlan ? (
+                    <div className="mt-4 grid gap-2">
+                      <button
+                        type="button"
+                        onClick={() => onSubscribe?.(plan.id)}
+                        disabled={disableAction || isLoading}
+                        className={`inline-flex w-full items-center justify-center rounded-xl px-4 py-2.5 text-sm font-semibold transition ${
+                          disableAction
+                            ? "cursor-not-allowed bg-slate-200 text-slate-500 dark:bg-slate-800 dark:text-slate-400"
+                            : "bg-gradient-to-r from-[#32C5FF] via-[#0F1F3C] to-[#67FF9A] text-white shadow-lg shadow-[#32C5FF]/30 hover:from-[#574de3] hover:to-[#9c784f] disabled:cursor-not-allowed disabled:opacity-75"
+                        }`}
+                      >
+                        {isCurrentPlan
+                          ? "Plano atual"
+                          : isLoading
+                            ? "Conectando ao Mercado Pago..."
+                            : "Assinar mensal (cartão)"}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => onCheckoutPix?.(plan.id)}
+                        disabled={disableAction || isLoading || typeof onCheckoutPix !== "function"}
+                        className={`inline-flex w-full items-center justify-center rounded-xl border px-4 py-2.5 text-sm font-semibold transition ${
+                          disableAction || typeof onCheckoutPix !== "function"
+                            ? "cursor-not-allowed border-slate-200 bg-slate-100 text-slate-400 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-500"
+                            : "border-[#32C5FF]/40 bg-white text-[#0F1F3C] shadow-sm hover:border-[#32C5FF]/70 hover:bg-[#E6F4FF]/60 dark:border-white/20 dark:bg-slate-900 dark:text-white"
+                        }`}
+                      >
+                        Pagar 1 mês no Pix
+                      </button>
+                    </div>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => onSubscribe?.(plan.id)}
+                      disabled={disableAction || isLoading}
+                      className={`mt-4 inline-flex w-full items-center justify-center rounded-xl px-4 py-2.5 text-sm font-semibold transition ${
+                        disableAction
+                          ? "cursor-not-allowed bg-slate-200 text-slate-500 dark:bg-slate-800 dark:text-slate-400"
+                          : "bg-gradient-to-r from-[#32C5FF] via-[#0F1F3C] to-[#67FF9A] text-white shadow-lg shadow-[#32C5FF]/30 hover:from-[#574de3] hover:to-[#9c784f] disabled:cursor-not-allowed disabled:opacity-75"
+                      }`}
+                    >
+                      {isCurrentPlan
+                        ? "Plano atual"
+                        : isLoading
+                          ? "Conectando ao Mercado Pago..."
+                          : `Assinar ${plan.shortName}`}
+                    </button>
+                  )}
                 </div>
                 );
               })}
@@ -150,5 +202,7 @@ export default function PremiumPlansModal({
       </div>
     </div>
   );
-}
 
+  if (!portalTarget) return modalContent;
+  return createPortal(modalContent, portalTarget);
+}

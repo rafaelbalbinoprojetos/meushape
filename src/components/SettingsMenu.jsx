@@ -1,5 +1,6 @@
 ﻿import React from "react";
 import { useNavigate } from "react-router-dom";
+import { useTheme } from "../context/ThemeContext.jsx";
 
 const MENU_ITEMS = [
   {
@@ -48,6 +49,7 @@ export default function SettingsMenu({ onSignOut, onReload, onOpenNotifications,
   const [open, setOpen] = React.useState(false);
   const containerRef = React.useRef(null);
   const navigate = useNavigate();
+  const { isDark } = useTheme();
 
   React.useEffect(() => {
     if (!open) {
@@ -108,10 +110,10 @@ export default function SettingsMenu({ onSignOut, onReload, onOpenNotifications,
         aria-expanded={open}
         aria-controls="settings-menu"
         className={`flex h-10 w-10 items-center justify-center rounded-lg border border-gray-200 bg-white text-gray-600 shadow-sm transition hover:border-temaSky hover:text-temaSky dark:border-gray-700 dark:bg-gray-800 dark:text-gray-300 dark:hover:border-temaEmerald dark:hover:text-temaEmerald ${open ? "ring-2 ring-temaSky/30 dark:ring-temaEmerald/30" : ""}`}
-        title="Abrir configurações do usu�rio"
+        title="Abrir configurações do usuário"
       >
         <span className="sr-only">{open ? "Fechar configurações" : "Abrir configurações"}</span>
-        <GearIcon className="h-5 w-5" />
+        <SlidersIcon className="h-5 w-5" />
       </button>
 
       {open && (
@@ -120,10 +122,17 @@ export default function SettingsMenu({ onSignOut, onReload, onOpenNotifications,
           role="dialog"
           aria-modal="false"
           aria-label="configurações"
-          className="absolute right-0 top-12 z-40 flex w-80 max-h-[80vh] flex-col rounded-xl border border-gray-200 bg-white p-4 text-sm shadow-2xl dark:border-gray-800 dark:bg-gray-900"
+          className="absolute right-0 top-12 z-40 flex w-80 max-h-[80vh] flex-col rounded-xl border p-4 text-sm shadow-2xl backdrop-blur-md dark:border-gray-800 dark:bg-gray-900/95 dark:shadow-black/30"
+          style={{
+            backgroundColor: isDark ? "rgba(15,23,42,0.92)" : "rgba(255,255,255,0.96)",
+            borderColor: isDark ? "rgba(255,255,255,0.08)" : "rgba(229,229,234,0.8)",
+            boxShadow: isDark
+              ? "0 25px 60px -35px rgba(0,0,0,0.45)"
+              : "0 25px 60px -35px rgba(15,31,60,0.18)",
+          }}
         >
-          <header className="border-b border-gray-200 pb-3 dark:border-gray-800">
-            <p className="text-sm font-semibold text-gray-900 dark:text-gray-100">configurações</p>
+          <header className="border-b border-[color:var(--border-soft)] pb-3 dark:border-gray-800">
+            <p className="text-sm font-semibold text-[rgb(var(--text-primary))] dark:text-gray-100">configurações</p>
           </header>
 
           <div className="mt-3 flex-1 overflow-y-auto pr-1">
@@ -171,16 +180,24 @@ export default function SettingsMenu({ onSignOut, onReload, onOpenNotifications,
   );
 }
 
-function GearIcon({ className }) {
+function SlidersIcon({ className }) {
   return (
     <svg
       xmlns="http://www.w3.org/2000/svg"
       viewBox="0 0 24 24"
-      fill="currentColor"
+      fill="none"
       className={className}
       aria-hidden="true"
     >
-      <path d="M11.303 1.518a1.75 1.75 0 011.394 0l1.41.582a1.75 1.75 0 012.09-.454l1.3.6a1.75 1.75 0 01.93 2.12l-.42 1.41a1.74 1.74 0 010 .894l.42 1.41a1.75 1.75 0 01-.93 2.12l-1.3.6a1.75 1.75 0 01-2.09-.455l-1.41.582a1.75 1.75 0 01-1.394 0l-1.41-.582a1.75 1.75 0 01-2.09.455l-1.3-.6a1.75 1.75 0 01-.93-2.12l.42-1.41a1.74 1.74 0 010-.894l-.42-1.41a1.75 1.75 0 01.93-2.12l1.3-.6a1.75 1.75 0 012.09.455l1.41-.582zM12 9.25a2.25 2.25 0 102.25 2.25A2.25 2.25 0 0012 9.25zm-6.5 4.5a.75.75 0 01.75.75v1.14a2.25 2.25 0 001.11 1.94l.99.57a2.25 2.25 0 001.98.05l1.25-.52.62 1.48a1.75 1.75 0 01-.83 2.18l-1.1.57a1.75 1.75 0 01-2.09-.45l-1.41.58a1.75 1.75 0 01-1.39 0l-1.41-.58a1.75 1.75 0 01-2.09.45l-1.1-.57a1.75 1.75 0 01-.83-2.18l.62-1.48-1.25-.52a2.25 2.25 0 01-1.98-.05l-.99-.57a2.25 2.25 0 01-1.11-1.94v-1.14a.75.75 0 01.75-.75h1.14a2.25 2.25 0 001.94-1.11l.57-.99a2.25 2.25 0 01.05-1.98l.52-1.25 1.48.62a1.75 1.75 0 002.18-.83l.57-1.1a1.75 1.75 0 012.18-.83l1.48.62-.52 1.25a2.25 2.25 0 01.05 1.98l-.57.99a2.25 2.25 0 001.94 1.11h1.14z" />
+      <path
+        d="M4 6h6M14 6h6M10 6v8M4 18h10M18 18h2M14 18v-8"
+        stroke="currentColor"
+        strokeWidth="1.6"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+      <circle cx="10" cy="6" r="2.2" stroke="currentColor" strokeWidth="1.6" />
+      <circle cx="14" cy="18" r="2.2" stroke="currentColor" strokeWidth="1.6" />
     </svg>
   );
 }

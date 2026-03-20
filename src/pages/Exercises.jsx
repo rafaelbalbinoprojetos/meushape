@@ -4,13 +4,15 @@ import { useExercises } from "../hooks/useExercises.js";
 
 const GROUP_FILTERS = [
   { value: "all", label: "Todos" },
-  { value: "Peito", label: "Peito" },
-  { value: "Costas", label: "Costas" },
-  { value: "Pernas", label: "Pernas" },
-  { value: "Posterior", label: "Posterior" },
-  { value: "Ombro", label: "Ombro" },
-  { value: "Braços", label: "Braços" },
-  { value: "Core", label: "Core" },
+  { value: "peito", label: "Peito" },
+  { value: "costas", label: "Costas" },
+  { value: "ombro", label: "Ombros" },
+  { value: "perna", label: "Pernas" },
+  { value: "posterior", label: "Posterior" },
+  { value: "braco", label: "Braços" },
+  { value: "core", label: "Core" },
+  { value: "cardio", label: "Cardio" },
+  { value: "fullbody", label: "Corpo todo" },
 ];
 
 const LEVEL_OPTIONS = [
@@ -172,12 +174,22 @@ export default function ExercisesPage() {
 
   return (
     <div className="space-y-10">
-      <section className="relative overflow-hidden rounded-[40px] border border-white/10 bg-gradient-to-r from-[#050914] via-[#0b1f3a] to-[#041229] p-8 text-white shadow-2xl">
+      <section
+        className="relative overflow-hidden rounded-[40px] border p-8 shadow-2xl"
+        style={{
+          borderColor: "rgba(var(--color-accent-primary),0.28)",
+          backgroundImage:
+            "linear-gradient(140deg, rgba(var(--color-accent-primary),0.9), rgba(var(--color-secondary-primary),0.85))",
+          boxShadow: "0 28px 82px -48px rgba(0,0,0,0.55)",
+        }}
+      >
         <div className="grid gap-10 lg:grid-cols-[1.4fr,1fr]">
           <div>
-            <p className="text-xs uppercase tracking-[0.45em] text-white/60">Atlas premium de exercicios</p>
-            <h1 className="mt-4 text-4xl font-semibold leading-tight lg:text-5xl">Organize execucoes com visual profissional.</h1>
-            <p className="mt-5 max-w-2xl text-lg text-white/70">
+            <p className="text-xs uppercase tracking-[0.45em] text-[rgb(var(--text-secondary))]">Atlas premium de exercicios</p>
+            <h1 className="mt-4 text-4xl font-semibold leading-tight text-[rgb(var(--text-primary))] lg:text-5xl">
+              Organize execucoes com visual profissional.
+            </h1>
+            <p className="mt-5 max-w-2xl text-lg text-[rgb(var(--text-secondary))]">
               Explore o acervo oficial do Meu Shape, visualize tecnicas, avalie o risco biomecanico e envie os movimentos direto para a construcao das fichas.
             </p>
 
@@ -187,22 +199,28 @@ export default function ExercisesPage() {
               </p>
             )}
 
-            <div className="mt-6 flex flex-wrap gap-3 text-xs uppercase tracking-[0.35em] text-white/70">
-              <span className="rounded-full border border-white/20 px-4 py-2">
+            <div className="mt-6 flex flex-wrap gap-3 text-xs uppercase tracking-[0.35em] text-[rgb(var(--text-secondary))]">
+              <span className="rounded-full border border-white/20 bg-white/10 px-4 py-2 text-[rgb(var(--text-primary))]">
                 {stats.total} catalogados
               </span>
-              <span className="rounded-full border border-white/20 px-4 py-2">
+              <span className="rounded-full border border-white/20 bg-white/10 px-4 py-2 text-[rgb(var(--text-primary))]">
                 {stats.withVideo} com video
               </span>
-              <span className="rounded-full border border-white/20 px-4 py-2">
+              <span className="rounded-full border border-white/20 bg-white/10 px-4 py-2 text-[rgb(var(--text-primary))]">
                 {stats.advanced} avançados
               </span>
-              <span className="rounded-full border border-white/20 px-4 py-2">
+              <span className="rounded-full border border-white/20 bg-white/10 px-4 py-2 text-[rgb(var(--text-primary))]">
                 {stats.lowImpact} baixo impacto
               </span>
             </div>
           </div>
-          <div className="rounded-[32px] border border-white/10 bg-white/5 p-4 backdrop-blur-2xl">
+          <div
+            className="rounded-[32px] border p-4 backdrop-blur-2xl"
+            style={{
+              borderColor: "rgba(var(--color-accent-primary),0.25)",
+              backgroundColor: "rgba(255,255,255,0.12)",
+            }}
+          >
             <div className="relative h-64 overflow-hidden rounded-[28px] border border-white/10">
               <img
                 src={spotlightExercise?.imagem_url || DEFAULT_IMAGE}
@@ -216,10 +234,10 @@ export default function ExercisesPage() {
                 </span>
               )}
             </div>
-            <div className="mt-4 space-y-2 text-white">
-              <p className="text-xs uppercase tracking-[0.35em] text-white/60">Em foco</p>
+            <div className="mt-4 space-y-2 text-[rgb(var(--text-primary))]">
+              <p className="text-xs uppercase tracking-[0.35em] text-[rgb(var(--text-secondary))]">Em foco</p>
               <p className="text-2xl font-semibold">{spotlightExercise?.nome ?? "Selecione um movimento"}</p>
-              <p className="text-sm text-white/70">
+              <p className="text-sm text-[rgb(var(--text-secondary))]">
                 {spotlightExercise?.descricao ?? "Escolha um exercicio para visualizar nivel, execucao e observacoes."}
               </p>
             </div>
@@ -237,7 +255,12 @@ export default function ExercisesPage() {
           <button
             type="button"
             onClick={reload}
-            className="inline-flex items-center gap-3 rounded-2xl border border-white/20 px-6 py-3 text-sm font-semibold text-white transition hover:border-white/40"
+            className="inline-flex items-center gap-3 rounded-2xl border px-6 py-3 text-sm font-semibold transition hover:scale-[1.01]"
+            style={{
+              borderColor: "rgba(var(--color-accent-primary),0.3)",
+              color: "rgb(var(--text-primary))",
+              backgroundColor: "rgba(var(--surface-muted),0.7)",
+            }}
           >
             Atualizar biblioteca
           </button>
@@ -288,13 +311,34 @@ export default function ExercisesPage() {
           </div>
 
           <div className="mt-4 flex flex-col gap-4 lg:flex-row">
-            <input
-              type="text"
-              value={equipmentFilter}
-              onChange={(event) => setEquipmentFilter(event.target.value)}
-              placeholder="Filtrar por equipamento (ex.: barra, pulley, halteres)"
-              className="flex-1 rounded-2xl border border-white/30 bg-white/40 px-4 py-3 text-sm text-[rgb(var(--text-primary))] placeholder:text-[rgb(var(--text-secondary))] focus:outline-none dark:border-white/10 dark:bg-white/5 dark:text-white"
-            />
+            <div className="flex-1 rounded-2xl border border-white/30 bg-white/40 px-4 py-3 dark:border-white/10 dark:bg-white/5">
+              <div className="flex items-center gap-2 text-sm text-[rgb(var(--text-secondary))] dark:text-white/80">
+                <span>🔍</span>
+                <input
+                  type="text"
+                  value={equipmentFilter}
+                  onChange={(event) => setEquipmentFilter(event.target.value)}
+                  placeholder="Filtrar por equipamento (ex.: barra, pulley, halteres, banco inclinado)"
+                  className="flex-1 bg-transparent text-sm text-[rgb(var(--text-primary))] placeholder:text-[rgb(var(--text-secondary))] focus:outline-none dark:text-white"
+                />
+              </div>
+              <div className="mt-3 flex flex-wrap gap-2 text-xs font-semibold text-[rgb(var(--text-secondary))] dark:text-white/70">
+                {["Barra", "Halteres", "Pulley", "Banco inclinado", "Peso corporal"].map((chip) => (
+                  <button
+                    key={chip}
+                    type="button"
+                    onClick={() => setEquipmentFilter(chip)}
+                    className={`rounded-full px-3 py-1 ${
+                      equipmentFilter.toLowerCase() === chip.toLowerCase()
+                        ? "bg-[#32C5FF]/20 text-[#0f1f3c]"
+                        : "bg-white/40 text-[rgb(var(--text-secondary))] dark:bg-white/10 dark:text-white/80"
+                    }`}
+                  >
+                    {chip}
+                  </button>
+                ))}
+              </div>
+            </div>
             <button
               type="button"
               onClick={() => {
@@ -375,10 +419,14 @@ function FilterSelect({ label, value, options, onChange }) {
       <select
         value={value}
         onChange={(event) => onChange(event.target.value)}
-        className="rounded-2xl border border-white/30 bg-white/40 px-3 py-2 text-sm font-semibold text-[rgb(var(--text-primary))] focus:outline-none dark:border-white/10 dark:bg-white/5 dark:text-white"
+        className="rounded-2xl border border-white/30 bg-white px-3 py-2 text-sm font-semibold text-[rgb(var(--text-primary))] focus:outline-none dark:border-white/10 dark:bg-slate-900 dark:text-white"
       >
         {options.map((option) => (
-          <option key={option.value} value={option.value}>
+          <option
+            key={option.value}
+            value={option.value}
+            className="bg-white text-[rgb(var(--text-primary))] dark:bg-slate-900 dark:text-white"
+          >
             {option.label}
           </option>
         ))}
@@ -409,21 +457,73 @@ function ExerciseCard({ exercise, selected, onToggleSelect, onHighlight }) {
   });
   const executionLabel = formatExecutionLabel(exercise.tipo_execucao);
   const executionNotes = parseExecutionNotes(exercise.execucao).slice(0, 2);
+  const typeChips = [
+    exercise.equipamento ? `🏋️ ${exercise.equipamento}` : null,
+    exercise.lateralidade ? (exercise.lateralidade.toLowerCase().includes("uni") ? "Unilateral" : "Bilateral") : null,
+    executionLabel ? executionLabel : null,
+  ].filter(Boolean);
+  const secondaryImage = exercise.frame_video_url || exercise.imagem_secundaria;
+  const previewVideo = exercise.preview_video_url || exercise.video_url;
+  const riskColor =
+    (exercise.risco || "").toLowerCase().includes("alto")
+      ? "bg-rose-500"
+      : (exercise.risco || "").toLowerCase().includes("mod")
+        ? "bg-amber-400"
+        : "bg-emerald-400";
+  const badges = [];
+  if (exercise.novo || exercise.is_new) badges.push("🆕 Novo");
+  if (exercise.atualizado_recentemente) badges.push("⚡ Atualizado");
+  if (["avancado", "pro"].includes((exercise.nivel || "").toLowerCase())) badges.push("🏋️ Avançado");
+  if (exercise.popular || (exercise.uso_count ?? 0) > 15) badges.push("🔥 Popular");
+  if (exercise.recomendado) badges.push("✅ Recomendado");
+  const lastUpdated = exercise.atualizado_em || exercise.updated_at || exercise.created_at;
+  const suggestion = {
+    series: exercise.series_sugeridas || "3",
+    reps: exercise.repeticoes_sugeridas || "10–12",
+    descanso: exercise.descanso_sugerido || "60–90s",
+  };
+  const tecnicaTip =
+    exercise.dica_tecnica ||
+    executionNotes[0] ||
+    "Amplitude total + cadência controlada para pico de contração.";
+
+  const biomecanica = exercise.biomecanica || exercise.estimulo_principal || "";
+  const focoEstimulo = exercise.foco_estimulo || exercise.estimulo || "";
 
   return (
     <article
-      className={`flex flex-col rounded-[28px] border border-white/20 bg-white/80 p-4 shadow-lg transition hover:translate-y-[-2px] hover:shadow-2xl dark:border-white/5 dark:bg-slate-900/60 ${
+      className={`group relative flex flex-col rounded-[28px] border border-white/20 bg-white/80 p-4 shadow-lg transition hover:translate-y-[-2px] hover:shadow-2xl dark:border-white/5 dark:bg-slate-900/60 ${
         selected ? "border-[#32C5FF] shadow-[#32C5FF]/40" : ""
       }`}
     >
       <div className="relative h-48 overflow-hidden rounded-3xl border border-white/30">
-        <Link to={`/exercicios/${exercise.id}`}>
+        <Link to={`/exercicios/${exercise.id}`} className="block h-full w-full">
+          {previewVideo ? (
+            <video
+              src={previewVideo}
+              className="h-full w-full object-cover opacity-0 transition duration-500 group-hover:opacity-100"
+              autoPlay
+              muted
+              loop
+              playsInline
+            />
+          ) : null}
           <img
             src={exercise.imagem_url || DEFAULT_IMAGE}
             alt={exercise.nome}
-            className="h-full w-full object-cover transition duration-500 hover:scale-105"
+            className={`absolute inset-0 h-full w-full object-cover transition duration-500 ${
+              secondaryImage || previewVideo ? "opacity-100 group-hover:opacity-0" : ""
+            }`}
             loading="lazy"
           />
+          {secondaryImage ? (
+            <img
+              src={secondaryImage}
+              alt={`${exercise.nome} - lateral`}
+              className="absolute inset-0 h-full w-full object-cover opacity-0 transition duration-500 group-hover:opacity-100"
+              loading="lazy"
+            />
+          ) : null}
         </Link>
         <button
           type="button"
@@ -437,6 +537,11 @@ function ExerciseCard({ exercise, selected, onToggleSelect, onHighlight }) {
             Video
           </span>
         )}
+        <div className="pointer-events-none absolute inset-x-0 bottom-2 flex justify-center opacity-0 transition duration-200 group-hover:opacity-100">
+          <div className="rounded-2xl bg-black/70 px-3 py-2 text-[11px] text-white">
+            Sugestão: {suggestion.series} séries • {suggestion.reps} reps • {suggestion.descanso}
+          </div>
+        </div>
       </div>
       <div className="mt-4 flex flex-1 flex-col gap-3">
         <div className="flex flex-wrap items-center gap-2 text-xs">
@@ -452,9 +557,15 @@ function ExerciseCard({ exercise, selected, onToggleSelect, onHighlight }) {
         </div>
         <div>
           <h3 className="text-xl font-semibold text-[rgb(var(--text-primary))] dark:text-white">{exercise.nome}</h3>
-          <p className="mt-1 text-sm text-[rgb(var(--text-secondary))]">
-            {exercise.descricao ?? "Sem descricao cadastrada."}
-          </p>
+          <div className="mt-1 flex flex-wrap items-center gap-2">
+            {badges.map((badge) => (
+              <span key={`${exercise.id}-${badge}`} className="rounded-full bg-[#32C5FF]/10 px-2.5 py-1 text-[11px] font-semibold text-[#0f1f3c] dark:bg-white/10 dark:text-white">
+                {badge}
+              </span>
+            ))}
+          </div>
+          <p className="mt-1 text-sm text-[rgb(var(--text-secondary))]">{exercise.descricao ?? "Sem descricao cadastrada."}</p>
+          <p className="text-[11px] font-semibold text-[rgb(var(--text-primary))] dark:text-white">{tecnicaTip}</p>
         </div>
         <div className="text-sm text-[rgb(var(--text-secondary))]">
           <p className="font-semibold text-[rgb(var(--text-primary))] dark:text-white">Execucao</p>
@@ -470,12 +581,39 @@ function ExerciseCard({ exercise, selected, onToggleSelect, onHighlight }) {
               <li className="text-sm">Sem observacoes detalhadas.</li>
             )}
           </ul>
+          <div className="mt-2 grid gap-2 text-[11px] text-[rgb(var(--text-secondary))] sm:grid-cols-2">
+            {biomecanica ? (
+              <div className="rounded-xl border border-white/30 bg-white/40 p-2 dark:border-white/10 dark:bg-white/5 dark:text-white/80">
+                <p className="text-[10px] uppercase tracking-[0.3em] text-[rgb(var(--text-subtle))]">Biomecânica</p>
+                <p className="font-semibold">{biomecanica}</p>
+              </div>
+            ) : null}
+            {focoEstimulo ? (
+              <div className="rounded-xl border border-white/30 bg-white/40 p-2 dark:border-white/10 dark:bg-white/5 dark:text-white/80">
+                <p className="text-[10px] uppercase tracking-[0.3em] text-[rgb(var(--text-subtle))]">Foco de estímulo</p>
+                <p className="font-semibold">{focoEstimulo}</p>
+              </div>
+            ) : null}
+          </div>
         </div>
         {exercise.equipamento && (
           <p className="text-xs uppercase tracking-[0.3em] text-[rgb(var(--text-secondary))]">
             Equipamento: {exercise.equipamento}
           </p>
         )}
+        {typeChips.length > 0 && (
+          <div className="flex flex-wrap gap-2 text-[11px] text-[rgb(var(--text-secondary))]">
+            {typeChips.map((chip) => (
+              <span key={`${exercise.id}-${chip}`} className="rounded-full bg-[rgba(15,31,60,0.06)] px-2.5 py-1 dark:bg-white/10 dark:text-white/80">
+                {chip}
+              </span>
+            ))}
+          </div>
+        )}
+        <div className="flex items-center gap-2 text-xs text-[rgb(var(--text-secondary))]">
+          <span className={`h-2 w-2 rounded-full ${riskColor}`} />
+          <span>Risco biomecânico: {riskBadge.label}</span>
+        </div>
         <div className="mt-auto flex flex-wrap gap-3 pt-3">
           <button
             type="button"
@@ -496,11 +634,24 @@ function ExerciseCard({ exercise, selected, onToggleSelect, onHighlight }) {
           </Link>
           <Link
             to={`/treinos/novo?exercicios=${exercise.id}`}
-            className="inline-flex items-center justify-center gap-2 rounded-2xl border border-white/30 px-4 py-2 text-sm font-semibold text-[rgb(var(--text-primary))] hover:border-white/60 dark:text-white"
+            className="inline-flex items-center justify-center gap-2 rounded-2xl bg-gradient-to-r from-[#32C5FF] to-[#67FF9A] px-4 py-2 text-sm font-semibold text-[#041220] shadow-md shadow-[#32C5FF]/30 transition hover:scale-[1.01]"
           >
             Usar agora
           </Link>
+          {exercise.video_url ? (
+            <Link
+              to={exercise.video_url}
+              target="_blank"
+              rel="noreferrer"
+              className="inline-flex items-center justify-center gap-2 rounded-2xl border border-[#32C5FF] px-4 py-2 text-sm font-semibold text-[#0f1f3c] transition hover:bg-[#32C5FF]/10 dark:text-white"
+            >
+              🎥 Assistir execução
+            </Link>
+          ) : null}
         </div>
+        {lastUpdated ? (
+          <p className="mt-2 text-[11px] text-[rgb(var(--text-secondary))]">📅 Atualizado: {new Date(lastUpdated).toLocaleDateString()}</p>
+        ) : null}
       </div>
     </article>
   );

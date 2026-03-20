@@ -6,10 +6,7 @@ import { supabase } from "../../lib/supabase.js";
 import ThemeSwitcher from "../../components/ThemeSwitcher.jsx";
 
 const LOGIN_BACKGROUNDS = [
-  "https://images.unsplash.com/photo-1520607162513-77705c0f0d4a?auto=format&fit=crop&w=1600&q=80",
-  "https://images.unsplash.com/photo-1507679799987-c73779587ccf?auto=format&fit=crop&w=1600&q=80",
-  "https://images.unsplash.com/photo-1556740749-887f6717d7e4?auto=format&fit=crop&w=1600&q=80",
-  "https://images.unsplash.com/photo-1504384308090-c894fdcc538d?auto=format&fit=crop&w=1600&q=80",
+  "https://wqqygppadqecwwznocny.supabase.co/storage/v1/object/public/midias/images%20diversas/login.png",
 ];
 
 const TERMS_URL = import.meta.env.VITE_TERMS_URL ?? "#";
@@ -45,12 +42,12 @@ export default function LoginPage() {
       return "Digite seu email para fazer login ou criar um cadastro em segundos.";
     }
     if (!formData.email.includes("@")) {
-      return "Use um email v�lido, por exemplo: você@exemplo.com";
+      return "Use um email válido, por exemplo: você@exemplo.com";
     }
     if (emailStatus === "new") {
-      return "Detectamos um novo email. Enviaremos um link de confirma��o para o seu endere�o.";
+      return "Detectamos um novo email. Enviaremos um link de confirmação para o seu endereço.";
     }
-    return "Se j� existir uma conta, faremos o login. Caso contr�rio, criaremos uma para voc�.";
+    return "Se já existir uma conta, faremos o login. Caso contrário, criaremos uma para você.";
   }, [emailStatus, formData.email]);
 
   const emailHelperTone = emailStatus === "new" ? "text-emerald-600 dark:text-emerald-300" : "text-slate-500 dark:text-slate-400";
@@ -82,17 +79,17 @@ export default function LoginPage() {
 
         if (result.requiresEmailConfirmation) {
           toast.success(`Conta criada! Confirme pelo link enviado para ${normalizedEmail}.`);
-          setAuthNotice(`?Ys? Conta criada! Confirme o email ${normalizedEmail} para come�ar a usar o MEU SHAPE.`);
+          setAuthNotice(`Conta criada! Confirme o email ${normalizedEmail} para começar a usar o MEU SHAPE.`);
         } else {
           toast.success("Conta criada com sucesso! Estamos preparando o seu ambiente.");
-          setAuthNotice("?Ys? Conta criada! Aproveite seu per�odo de teste Premium por 7 dias.");
+          setAuthNotice("Conta criada! Aproveite seu período de teste Premium por 7 dias.");
         }
       } else {
         setEmailStatus("existing");
         toast.success("Login realizado com sucesso.");
       }
     } catch (submitError) {
-      const message = submitError?.message ?? "N�o foi poss�vel entrar. Verifique os dados.";
+      const message = submitError?.message ?? "Não foi possível entrar. Verifique os dados.";
       setFormError(message);
       setEmailStatus(submitError?.code === "existing_user_wrong_password" ? "existing" : "idle");
     } finally {
@@ -103,7 +100,7 @@ export default function LoginPage() {
   const handlePasswordReset = async () => {
     const trimmedEmail = formData.email.trim();
     if (!trimmedEmail) {
-      setFormError("Informe seu email para receber o link de recupera��o.");
+      setFormError("Informe seu email para receber o link de recuperação.");
       return;
     }
 
@@ -121,10 +118,10 @@ export default function LoginPage() {
         throw resetError;
       }
 
-      toast.success(`Enviamos um link de recupera��o para ${trimmedEmail}.`);
-      setAuthNotice(`Enviamos um link de recupera��o para ${trimmedEmail}. Verifique sua caixa de entrada e spam.`);
+      toast.success(`Enviamos um link de recuperação para ${trimmedEmail}.`);
+      setAuthNotice(`Enviamos um link de recuperação para ${trimmedEmail}. Verifique sua caixa de entrada e spam.`);
     } catch (resetError) {
-      const message = resetError?.message ?? "N�o foi poss�vel enviar o link de recupera��o.";
+      const message = resetError?.message ?? "Não foi possível enviar o link de recuperação.";
       setFormError(message);
     } finally {
       setResettingPassword(false);
@@ -149,11 +146,11 @@ export default function LoginPage() {
         />
 
         <div className="relative grid grid-cols-1 overflow-hidden md:grid-cols-[1.25fr,1fr]">
-          <div className="relative flex min-h-[260px] flex-col justify-between overflow-hidden bg-slate-900/80">
+          <div className="relative flex min-h-[260px] flex-col justify-end overflow-hidden bg-slate-900/80">
             {heroImage && (
               <img
                 src={heroImage}
-                alt="Cole��o de investimentos e finan�as pessoais"
+                alt="Treinos e nutrição com acompanhamento inteligente"
                 className="absolute inset-0 h-full w-full object-cover opacity-90"
                 loading="lazy"
               />
@@ -166,11 +163,11 @@ export default function LoginPage() {
                   MEU SHAPE
                 </span>
                 <h3 className="text-3xl font-semibold leading-snug text-white/95">
-                  Simplifique seu controle financeiro.
+                  Treinos e nutrição guiados para evolução real.
                 </h3>
                 <p className="text-sm text-slate-200/80">
-                  Assistente financeiro com IA para o seu dia a dia. Visualize despesas, rendas, investimentos e metas em um s� lugar.
-                  Decis�es mais seguras para o seu futuro.
+                  Plataforma fitness com treinos avançados, cardápio inteligente e um coach de IA que adapta cada fase aos seus objetivos.
+                  Mais resultado, menos dúvida.
                 </p>
               </div>
 
@@ -178,21 +175,21 @@ export default function LoginPage() {
                 <div className="flex items-center gap-3">
                   <div className="flex h-10 w-10 items-center justify-center rounded-full bg-white/10 text-emerald-200">
                     <span className="text-lg" aria-hidden="true">
-                      ?s?
+                      ✓
                     </span>
                   </div>
                   <p>
-                    Acesso imediato ao plano gratuito e 7 dias com todos os recursos Premium ??" IA financeira, voz, relat�rios inteligentes e
-                    exporta��es.
+                    Acesso imediato ao plano gratuito e 7 dias com todos os recursos Premium - treinos guiados, coach de IA, voz, playlists e
+                    fichas inteligentes.
                   </p>
                 </div>
                 <div className="flex items-center gap-3">
                   <div className="flex h-10 w-10 items-center justify-center rounded-full bg-white/10 text-emerald-200">
                     <span className="text-lg" aria-hidden="true">
-                      ?Y"?
+                      ⚡
                     </span>
                   </div>
-                  <p>Se j� tiver cadastro, basta informar sua senha. Se for novo por aqui, criamos sua conta automaticamente.</p>
+                  <p>Se já tiver cadastro, basta informar sua senha. Se for novo por aqui, criamos sua conta automaticamente para você treinar agora.</p>
                 </div>
               </div>
             </div>
@@ -205,7 +202,7 @@ export default function LoginPage() {
             <div className="relative flex items-start justify-between">
               <div className="space-y-2">
                 <h1 className="text-3xl font-semibold text-slate-900 dark:text-white">Bem-vindo</h1>
-                <p className="text-sm text-slate-500 dark:text-slate-300">Use o mesmo formul�rio para entrar ou criar sua conta em segundos.</p>
+                <p className="text-sm text-slate-500 dark:text-slate-300">Use o mesmo formulário para entrar ou criar sua conta em segundos.</p>
               </div>
               <div className="-mr-2">
                 <ThemeSwitcher />
@@ -250,7 +247,7 @@ export default function LoginPage() {
                     value={formData.password}
                     onChange={handleChange}
                     className="w-full rounded-xl border border-slate-200 bg-white/70 px-4 py-3 pr-12 text-sm text-slate-900 shadow-[0_15px_40px_-20px_rgba(15,23,42,0.35)] focus:border-emerald-400 focus:outline-none focus:ring-2 focus:ring-emerald-400/40 dark:border-slate-700 dark:bg-slate-900/70 dark:text-slate-100 dark:focus:border-emerald-300"
-                    placeholder="????????????????????????"
+                    placeholder=""
                   />
                   <button
                     type="button"
@@ -268,7 +265,7 @@ export default function LoginPage() {
                     disabled={resettingPassword || loading}
                     className="text-xs font-semibold text-emerald-600 transition hover:text-emerald-500 disabled:cursor-not-allowed disabled:opacity-60 dark:text-emerald-300 dark:hover:text-emerald-200"
                   >
-                    {resettingPassword ? "Enviando link de recupera��o..." : "Esqueci minha senha"}
+                    {resettingPassword ? "Enviando link de recuperação..." : "Esqueci minha senha"}
                   </button>
                 </div>
               </div>
@@ -278,7 +275,7 @@ export default function LoginPage() {
                   className="rounded-xl border border-rose-500/30 bg-rose-500/10 px-4 py-3 text-sm text-rose-600 shadow-inner dark:border-rose-400/30 dark:bg-rose-500/15 dark:text-rose-200"
                   role="alert"
                 >
-                  {formError || error?.message || "N�o foi poss�vel entrar. Verifique os dados."}
+                  {formError || error?.message || "Não foi possível entrar. Verifique os dados."}
                 </div>
               )}
 
@@ -300,13 +297,13 @@ export default function LoginPage() {
               </button>
 
               <p className="text-center text-[11px] leading-relaxed text-slate-400 dark:text-slate-500">
-                Ao criar, voc� concorda com nossos{" "}
+                Ao criar, você concorda com nossos{" "}
                 <a href={TERMS_URL} target="_blank" rel="noreferrer" className="font-semibold text-emerald-600 hover:text-emerald-500 dark:text-emerald-300">
                   termos de uso
                 </a>{" "}
                 e{" "}
                 <a href={PRIVACY_URL} target="_blank" rel="noreferrer" className="font-semibold text-emerald-600 hover:text-emerald-500 dark:text-emerald-300">
-                  pol�tica de privacidade
+                  política de privacidade
                 </a>
                 .
               </p>

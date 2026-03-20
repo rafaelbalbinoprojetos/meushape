@@ -5,6 +5,7 @@ const FICHAS_TABLE = import.meta.env.VITE_SUPABASE_FICHAS_TABLE?.trim() || FALLB
 const FICHA_EXERCICIOS_TABLE = "ficha_exercicios";
 const FICHA_TREINOS_TABLE = "ficha_treinos";
 const SUBDIVISION_ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
+const MASTER_USER_EMAIL = "balbino10@hotmail.com";
 const FICHA_EXERCICIOS_SELECTION = `
   id,
   exercicio_id,
@@ -272,6 +273,19 @@ export async function updateFichaWithExercises({ fichaId, ficha, treinos = [] } 
 
   const existingTreinoIds = (existingTreinos ?? []).map((treino) => treino.id).filter(Boolean);
   if (existingTreinoIds.length > 0) {
+    const { data: existingExercises, error: existingExercisesError } = await supabase
+      .from(FICHA_EXERCICIOS_TABLE)
+      .select("id")
+      .in("treino_id", existingTreinoIds);
+    if (existingExercisesError) throw existingExercisesError;
+    const existingExerciseIds = (existingExercises ?? []).map((exercise) => exercise.id).filter(Boolean);
+    if (existingExerciseIds.length > 0) {
+      const { error: deletePreferencesError } = await supabase
+        .from("exercicio_preferencias")
+        .delete()
+        .in("ficha_exercicio_id", existingExerciseIds);
+      if (deletePreferencesError) throw deletePreferencesError;
+    }
     const { error: deleteExercisesError } = await supabase
       .from(FICHA_EXERCICIOS_TABLE)
       .delete()
@@ -342,6 +356,70 @@ export async function updateFichaFields({ fichaId, fields = {} } = {}) {
   console.log("[updateFichaFields] sucesso ao atualizar midias: %o", data);
 
   return data ?? true;
+}
+
+export async function deleteFicha({ fichaId, usuarioId = null, usuarioEmail = "" } = {}) {
+  if (!fichaId) {
+    throw new Error("Informe o identificador da ficha para excluir.");
+  }
+
+  const isMasterUser = typeof usuarioEmail === "string" && usuarioEmail.toLowerCase() === MASTER_USER_EMAIL;
+  const hasUser = typeof usuarioId === "string" && usuarioId.trim().length > 0;
+
+  if (!isMasterUser && !hasUser) {
+    throw new Error("Usuario nao autorizado a excluir esta ficha.");
+  }
+
+  // Primeiro, valida se a ficha existe e pertence ao usuario (quando nao for master).
+  let checkQuery = supabase.from(FICHAS_TABLE).select("id, usuario_id").eq("id", fichaId);
+  if (!isMasterUser) {
+    checkQuery = checkQuery.eq("usuario_id", usuarioId);
+  }
+
+  const { data: existingFicha, error: fetchError } = await checkQuery.maybeSingle();
+  if (fetchError) throw fetchError;
+  if (!existingFicha) {
+    const err = new Error("Nao foi possivel excluir esta ficha ou ela ja foi removida.");
+    err.code = "not_found";
+    throw err;
+  }
+
+  // Exclui exercicios vinculados para nao violar as constraints de FK.
+  const { data: treinos, error: treinosError } = await supabase
+    .from(FICHA_TREINOS_TABLE)
+    .select("id")
+    .eq("ficha_id", fichaId);
+  if (treinosError) throw treinosError;
+
+  const treinoIds = (treinos ?? []).map((treino) => treino.id).filter(Boolean);
+  if (treinoIds.length > 0) {
+    const { error: deleteExercisesError } = await supabase
+      .from(FICHA_EXERCICIOS_TABLE)
+      .delete()
+      .in("treino_id", treinoIds);
+    if (deleteExercisesError) throw deleteExercisesError;
+  }
+
+  const { error: deleteTreinosError } = await supabase.from(FICHA_TREINOS_TABLE).delete().eq("ficha_id", fichaId);
+  if (deleteTreinosError) throw deleteTreinosError;
+
+  let query = supabase.from(FICHAS_TABLE).delete().eq("id", fichaId);
+
+  // Usuarios comuns so conseguem excluir as fichas que pertencem a eles.
+  if (!isMasterUser) {
+    query = query.eq("usuario_id", usuarioId);
+  }
+
+  const { data, error } = await query.select("id");
+  if (error) throw error;
+
+  if (!Array.isArray(data) || data.length === 0) {
+    const err = new Error("Nao foi possivel excluir esta ficha ou ela ja foi removida.");
+    err.code = "not_found";
+    throw err;
+  }
+
+  return true;
 }
 
 async function insertFichaTreinos(fichaId, treinos = []) {

@@ -71,24 +71,24 @@ export default function WelcomeModal({ open, onStart, onSeePlans, onClose }) {
               Bem-vindo ao MEU SHAPE!
             </h2>
             <p className="text-sm text-[#e6ddff]/80">
-              Voc� est� no plano gratuito. Experimente 7 dias do Shape Pro com treinos ilimitados, nutri��o din�mica e Coach IA.
+              Você está no plano gratuito. Experimente 7 dias do Shape Pro com treinos ilimitados, nutrição dinâmica e Coach IA.
             </p>
           </div>
 
-          <div className="mt-6 rounded-2xl border border-white/10 bg-white/5 p-4 text-xs text-[#e6ddff]/85">
-            <p className="font-medium text-white">Durante o teste gratuito voc� desbloqueia:</p>
+          <div className="mt-6 rounded-2xl border border-white/10 bg-white/5 p-4 text-xs text-white">
+            <p className="font-medium text-white">Durante o teste gratuito você desbloqueia:</p>
             <ul className="mt-3 space-y-2">
               <li className="flex items-start gap-2">
                 <span className="mt-0.5 text-base leading-none">-</span>
-                <span>Treinos completos com v�deos, cron�metro inteligente e ajustes autom�ticos de carga.</span>
+                <span>Treinos completos com vídeos, cronômetro inteligente e ajustes automáticos de carga.</span>
               </li>
               <li className="flex items-start gap-2">
                 <span className="mt-0.5 text-base leading-none">-</span>
-                <span>Plano alimentar com macros recalculados e exporta��o em PDF.</span>
+                <span>Plano alimentar com macros recalculados e exportação em PDF.</span>
               </li>
               <li className="flex items-start gap-2">
                 <span className="mt-0.5 text-base leading-none">-</span>
-                <span>Coach virtual ilimitado com recomenda��es de treino, refei��o e recupera��o.</span>
+                <span>Coach virtual ilimitado com recomendações de treino, refeição e recuperação.</span>
               </li>
             </ul>
           </div>
@@ -99,7 +99,7 @@ export default function WelcomeModal({ open, onStart, onSeePlans, onClose }) {
               onClick={onStart}
               className="inline-flex w-full items-center justify-center rounded-xl bg-gradient-to-r from-[#32C5FF] via-[#0F1F3C] to-[#67FF9A] px-5 py-3 text-sm font-semibold text-white shadow-lg shadow-[#32C5FF]/30 transition hover:from-[#574de3] hover:via-[#3c2f75] hover:to-[#8f683f] sm:w-auto"
             >
-              Come�ar agora
+              Começar agora
             </button>
             <button
               type="button"
@@ -111,7 +111,7 @@ export default function WelcomeModal({ open, onStart, onSeePlans, onClose }) {
           </div>
 
           <p className="mt-6 text-center text-[11px] text-[#e6ddff]/70">
-            Cancelamento simples, sem cart�o at� o fim do teste. Ajuste o plano quando quiser.
+            Cancelamento simples, sem cartão até o fim do teste. Ajuste o plano quando quiser.
           </p>
         </div>
       </div>

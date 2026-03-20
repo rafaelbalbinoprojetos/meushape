@@ -23,16 +23,18 @@ const NotificationPanel = React.forwardRef(function NotificationPanel(
       role="dialog"
       aria-live="polite"
     >
-      <header className="mb-3 flex items-center justify-between">
+      <header className="mb-3 flex items-center justify-between gap-2">
         <p className="text-sm font-semibold text-[rgb(var(--text-primary))]">Notificações</p>
-        <button
-          type="button"
-          onClick={onClose}
-          className="rounded-full p-1 text-xs text-[rgb(var(--text-secondary))] transition hover:bg-white/20"
-          aria-label="Fechar Notificações"
-        >
-          ?-
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={onClose}
+            className="rounded-full p-1 text-xs text-[rgb(var(--text-secondary))] transition hover:bg-white/20"
+            aria-label="Fechar Notificações"
+          >
+            ?-
+          </button>
+        </div>
       </header>
 
       <div className="max-h-64 space-y-3 overflow-y-auto pr-1 text-sm">
@@ -47,7 +49,7 @@ const NotificationPanel = React.forwardRef(function NotificationPanel(
               className="rounded-xl border border-white/15 bg-white/40 px-3 py-2 shadow-sm dark:border-white/10 dark:bg-white/5"
             >
               <p className="text-xs uppercase tracking-[0.25em] text-[color:rgba(var(--color-secondary-primary),0.8)]">
-                {notification.type === "success" ? "Atualização" : "Info"}
+                {notification.type === "success" ? "Atualização" : notification.type === "reminder" ? "Lembrete" : "Info"}
               </p>
               <p className="text-sm font-semibold text-[rgb(var(--text-primary))]">{notification.title}</p>
               <p className="text-xs text-[rgb(var(--text-secondary))]">{notification.message}</p>

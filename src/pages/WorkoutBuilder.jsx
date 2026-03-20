@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import toast from "react-hot-toast";
 import { SAMPLE_WORKOUTS } from "../data/fitness.js";
@@ -8,7 +8,6 @@ import {
   createFichaWithExercises,
   getFichaById,
   listFichaTreinos,
-  updateFichaFields,
   updateFichaWithExercises,
 } from "../services/fichas.js";
 
@@ -119,17 +118,11 @@ export default function WorkoutBuilderPage({ baseFichaId = null } = {}) {
     equipment: ["Barra", "Halter"],
     duration: 55,
     description: "",
-    thumbnailUrl: "",
-    coverUrl: "",
   });
   const [treinos, setTreinos] = useState(() => [createDefaultTreino(0)]);
   const [submitting, setSubmitting] = useState(false);
   const [editingFichaId, setEditingFichaId] = useState(null);
   const [loadingExisting, setLoadingExisting] = useState(false);
-  const mediaSaveTimeoutRef = useRef(null);
-  const pendingMediaRef = useRef(null);
-  const [mediaSaving, setMediaSaving] = useState(false);
-  const [mediaSaveError, setMediaSaveError] = useState(null);
   const isEditing = Boolean(editingFichaId);
 
   const exerciseFilters = useMemo(() => ({ limit: 200 }), []);
@@ -149,64 +142,6 @@ export default function WorkoutBuilderPage({ baseFichaId = null } = {}) {
 
   const handleChange = (field, value) => {
     setForm((prev) => ({ ...prev, [field]: value }));
-  };
-
-  const runMediaSave = useCallback(
-    async (payload) => {
-      if (!isEditing || !editingFichaId) return;
-      if (!payload || Object.keys(payload).length === 0) return;
-      setMediaSaving(true);
-      setMediaSaveError(null);
-      try {
-        await updateFichaFields({ fichaId: editingFichaId, fields: payload });
-      } catch (error) {
-        console.error("[WorkoutBuilder] erro ao salvar midias automaticamente:", error);
-        setMediaSaveError(error?.message ?? "Falha ao salvar midias.");
-        toast.error("Nao foi possivel salvar as midias agora.");
-      } finally {
-        setMediaSaving(false);
-      }
-    },
-    [editingFichaId, isEditing],
-  );
-
-  const flushPendingMediaSave = useCallback(async () => {
-    if (mediaSaveTimeoutRef.current) {
-      clearTimeout(mediaSaveTimeoutRef.current);
-      mediaSaveTimeoutRef.current = null;
-    }
-    const payload = pendingMediaRef.current;
-    pendingMediaRef.current = null;
-    await runMediaSave(payload);
-  }, [runMediaSave]);
-
-  const scheduleMediaAutoSave = useCallback(
-    (fields) => {
-      if (!isEditing || !editingFichaId) {
-        return;
-      }
-      pendingMediaRef.current = { ...(pendingMediaRef.current ?? {}), ...fields };
-      setMediaSaveError(null);
-      if (mediaSaveTimeoutRef.current) {
-        clearTimeout(mediaSaveTimeoutRef.current);
-      }
-      mediaSaveTimeoutRef.current = setTimeout(() => {
-        const payload = pendingMediaRef.current;
-        pendingMediaRef.current = null;
-        mediaSaveTimeoutRef.current = null;
-        runMediaSave(payload);
-      }, 600);
-    },
-    [editingFichaId, isEditing, runMediaSave],
-  );
-
-  const handleMediaFieldChange = (field, value) => {
-    handleChange(field, value);
-    if (field === "thumbnailUrl") {
-      scheduleMediaAutoSave({ thumbnail_url: value });
-    } else if (field === "coverUrl") {
-      scheduleMediaAutoSave({ capa_url: value });
-    }
   };
 
   const handleListChange = (field, value) => {
@@ -258,22 +193,20 @@ export default function WorkoutBuilderPage({ baseFichaId = null } = {}) {
     async function loadExistingFicha(id) {
       setLoadingExisting(true);
       try {
-        const fichaData = await getFichaById(id);
-        if (!active) return;
-        if (!fichaData) {
-          throw new Error("Ficha nao encontrada.");
-        }
-        const treinosData = await listFichaTreinos(id);
-        if (!active) return;
-        setForm((prev) => ({
-          ...prev,
-          name: fichaData.nome ?? prev.name,
-          goal: fichaData.objetivo ?? prev.goal,
-          level: fichaData.nivel ?? prev.level,
-          description: fichaData.descricao ?? "",
-          thumbnailUrl: fichaData.thumbnail_url ?? "",
-          coverUrl: fichaData.capa_url ?? "",
-        }));
+      const fichaData = await getFichaById(id);
+      if (!active) return;
+      if (!fichaData) {
+        throw new Error("Ficha nao encontrada.");
+      }
+      const treinosData = await listFichaTreinos(id);
+      if (!active) return;
+      setForm((prev) => ({
+        ...prev,
+        name: fichaData.nome ?? prev.name,
+        goal: fichaData.objetivo ?? prev.goal,
+        level: fichaData.nivel ?? prev.level,
+        description: fichaData.descricao ?? "",
+      }));
         setTreinos(mapTreinosFromExisting(treinosData));
         setEditingFichaId(id);
         toast.success("Ficha carregada para edicao.");
@@ -300,21 +233,6 @@ export default function WorkoutBuilderPage({ baseFichaId = null } = {}) {
       active = false;
     };
   }, [fichaBaseId]);
-
-  useEffect(() => {
-    return () => {
-      if (mediaSaveTimeoutRef.current) {
-        clearTimeout(mediaSaveTimeoutRef.current);
-      }
-      const pendingPayload = pendingMediaRef.current;
-      pendingMediaRef.current = null;
-      if (isEditing && editingFichaId && pendingPayload && Object.keys(pendingPayload).length > 0) {
-        updateFichaFields({ fichaId: editingFichaId, fields: pendingPayload }).catch((error) => {
-          console.error("[WorkoutBuilder] erro ao salvar midias ao sair:", error);
-        });
-      }
-    };
-  }, [editingFichaId, isEditing]);
 
   const handleTreinoExerciseChange = (treinoId, exerciseIndex, field, value) => {
     if (isBusy) return;
@@ -362,8 +280,6 @@ export default function WorkoutBuilderPage({ baseFichaId = null } = {}) {
   const handleSubmit = async (event) => {
     event.preventDefault();
     if (isBusy) return;
-
-    await flushPendingMediaSave();
 
     const trimmedName = (form.name ?? "").trim();
     if (!trimmedName) {
@@ -475,8 +391,6 @@ export default function WorkoutBuilderPage({ baseFichaId = null } = {}) {
             descricao: fichaDescription,
             objetivo: form.goal,
             nivel: form.level,
-            thumbnail_url: form.thumbnailUrl,
-            capa_url: form.coverUrl,
           },
           treinos: normalizedTreinos,
         });
@@ -491,8 +405,6 @@ export default function WorkoutBuilderPage({ baseFichaId = null } = {}) {
             objetivo: form.goal,
             nivel: form.level,
             visibilidade: "privada",
-            thumbnail_url: form.thumbnailUrl,
-            capa_url: form.coverUrl,
           },
           treinos: normalizedTreinos,
         });
@@ -519,7 +431,7 @@ export default function WorkoutBuilderPage({ baseFichaId = null } = {}) {
         </h1>
         <p className="mt-4 max-w-2xl text-white/70">
           {isEditing
-            ? "Ajuste nome, descricao, imagens e toda a estrutura de treinos antes de salvar."
+            ? "Ajuste nome, descricao e toda a estrutura de treinos antes de salvar."
             : "Defina dias disponiveis, equipamentos e parametros de volume. Em breve voce podera sincronizar diretamente com o banco do MEU SHAPE."}
         </p>
         {loadingExisting && (
@@ -545,52 +457,19 @@ export default function WorkoutBuilderPage({ baseFichaId = null } = {}) {
 
       <section className="rounded-[32px] border border-white/30 bg-white/80 p-6 shadow-xl dark:border-slate-800 dark:bg-slate-900/70">
         <header className="mb-6">
-          <p className="text-xs uppercase tracking-[0.3em] text-[rgb(var(--text-subtle))]">Midias e descricao</p>
+          <p className="text-xs uppercase tracking-[0.3em] text-[rgb(var(--text-subtle))]">Descricao</p>
           <h2 className="text-2xl font-semibold text-[rgb(var(--text-primary))]">Detalhes complementares</h2>
         </header>
-        <div className="grid gap-4 md:grid-cols-2">
-          <label className="space-y-2 text-sm md:col-span-2">
-            <span className="text-[rgb(var(--text-secondary))]">Descricao da ficha</span>
-            <textarea
-              rows="3"
-              value={form.description}
-              onChange={(event) => handleChange("description", event.target.value)}
-              disabled={isBusy}
-              className="w-full rounded-2xl border border-white/60 bg-white px-4 py-3 text-sm outline-none ring-2 ring-transparent transition focus:border-[#32C5FF] focus:ring-[#32C5FF]/30 disabled:opacity-60 dark:border-slate-700 dark:bg-slate-900 dark:text-white"
-            />
-          </label>
-          <label className="space-y-2 text-sm">
-            <span className="text-[rgb(var(--text-secondary))]">Thumbnail (URL)</span>
-            <input
-              value={form.thumbnailUrl}
-              onChange={(event) => handleMediaFieldChange("thumbnailUrl", event.target.value)}
-              onBlur={flushPendingMediaSave}
-              placeholder="https://imagem-da-ficha.jpg"
-              disabled={isBusy}
-              className="w-full rounded-2xl border border-white/60 bg-white px-4 py-3 text-sm outline-none ring-2 ring-transparent transition focus:border-[#32C5FF] focus:ring-[#32C5FF]/30 disabled:opacity-60 dark:border-slate-700 dark:bg-slate-900 dark:text-white"
-            />
-          </label>
-          <label className="space-y-2 text-sm">
-            <span className="text-[rgb(var(--text-secondary))]">Capa (URL)</span>
-            <input
-              value={form.coverUrl}
-              onChange={(event) => handleMediaFieldChange("coverUrl", event.target.value)}
-              onBlur={flushPendingMediaSave}
-              placeholder="https://capa-da-ficha.jpg"
-              disabled={isBusy}
-              className="w-full rounded-2xl border border-white/60 bg-white px-4 py-3 text-sm outline-none ring-2 ring-transparent transition focus:border-[#32C5FF] focus:ring-[#32C5FF]/30 disabled:opacity-60 dark:border-slate-700 dark:bg-slate-900 dark:text-white"
-            />
-          </label>
-          {isEditing && (
-            <p className="md:col-span-2 text-xs text-[rgb(var(--text-secondary))]">
-              {mediaSaving
-                ? "Salvando links de midia..."
-                : mediaSaveError
-                  ? `Nao foi possivel salvar automaticamente: ${mediaSaveError}`
-                  : "Links salvos automaticamente ao alterar."}
-            </p>
-          )}
-        </div>
+        <label className="space-y-2 text-sm">
+          <span className="text-[rgb(var(--text-secondary))]">Descricao da ficha</span>
+          <textarea
+            rows="3"
+            value={form.description}
+            onChange={(event) => handleChange("description", event.target.value)}
+            disabled={isBusy}
+            className="w-full rounded-2xl border border-white/60 bg-white px-4 py-3 text-sm outline-none ring-2 ring-transparent transition focus:border-[#32C5FF] focus:ring-[#32C5FF]/30 disabled:opacity-60 dark:border-slate-700 dark:bg-slate-900 dark:text-white"
+          />
+        </label>
       </section>
 
       <section className="rounded-[32px] border border-white/30 bg-white/80 p-6 shadow-xl dark:border-slate-800 dark:bg-slate-900/70">

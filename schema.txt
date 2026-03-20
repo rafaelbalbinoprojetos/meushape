@@ -1,0 +1,324 @@
+create table public.ai_logs (
+  id uuid not null default extensions.uuid_generate_v4 (),
+  usuario_id uuid null,
+  mensagem_usuario text null,
+  resposta_ia text null,
+  metadata jsonb null,
+  criado_em timestamp without time zone null default now(),
+  constraint ai_logs_pkey primary key (id),
+  constraint ai_logs_usuario_id_fkey foreign KEY (usuario_id) references auth.users (id) on delete CASCADE
+) TABLESPACE pg_default;
+
+create table public.assinaturas (
+  id uuid not null default extensions.uuid_generate_v4 (),
+  usuario_id uuid null,
+  plano_id uuid null,
+  ativo boolean null default true,
+  data_inicio date null default CURRENT_DATE,
+  data_fim date null,
+  renovacao_automatica boolean null default true,
+  constraint assinaturas_pkey primary key (id),
+  constraint assinaturas_plano_id_fkey foreign KEY (plano_id) references planos_saas (id),
+  constraint assinaturas_usuario_id_fkey foreign KEY (usuario_id) references auth.users (id) on delete CASCADE
+) TABLESPACE pg_default;
+
+create table public.evolucao (
+  id uuid not null default extensions.uuid_generate_v4 (),
+  usuario_id uuid null,
+  peso numeric(6, 2) null,
+  braco numeric(6, 2) null,
+  peito numeric(6, 2) null,
+  cintura numeric(6, 2) null,
+  quadril numeric(6, 2) null,
+  perna numeric(6, 2) null,
+  gordura_corporal numeric(6, 2) null,
+  data date null default CURRENT_DATE,
+  criado_em timestamp without time zone null default now(),
+  constraint evolucao_pkey primary key (id),
+  constraint evolucao_usuario_id_fkey foreign KEY (usuario_id) references auth.users (id) on delete CASCADE
+) TABLESPACE pg_default;
+
+create table public.evolucao (
+  id uuid not null default extensions.uuid_generate_v4 (),
+  usuario_id uuid null,
+  peso numeric(6, 2) null,
+  braco numeric(6, 2) null,
+  peito numeric(6, 2) null,
+  cintura numeric(6, 2) null,
+  quadril numeric(6, 2) null,
+  perna numeric(6, 2) null,
+  gordura_corporal numeric(6, 2) null,
+  data date null default CURRENT_DATE,
+  criado_em timestamp without time zone null default now(),
+  constraint evolucao_pkey primary key (id),
+  constraint evolucao_usuario_id_fkey foreign KEY (usuario_id) references auth.users (id) on delete CASCADE
+) TABLESPACE pg_default;
+
+create table public.execucoes (
+  id uuid not null default extensions.uuid_generate_v4 (),
+  treino_id uuid null,
+  exercicio_id uuid null,
+  series_executadas integer null,
+  repeticoes_executadas text null,
+  carga_executada numeric(6, 2) null,
+  criado_em timestamp without time zone null default now(),
+  constraint execucoes_pkey primary key (id),
+  constraint execucoes_exercicio_id_fkey foreign KEY (exercicio_id) references exercicios (id) on delete set null,
+  constraint execucoes_treino_id_fkey foreign KEY (treino_id) references treinos_concluidos (id) on delete CASCADE
+) TABLESPACE pg_default;
+
+create table public.exercicios (
+  id uuid not null default extensions.uuid_generate_v4 (),
+  nome text not null,
+  grupo public.grupo_muscular not null,
+  descricao text null,
+  equipamento text null,
+  video_url text null,
+  imagem_url text null,
+  criado_em timestamp without time zone null default now(),
+  atualizado_em timestamp without time zone null default now(),
+  tipo_execucao public.tipo_execucao_enum null,
+  nivel public.nivel_exercicio_enum null,
+  risco public.risco_exercicio_enum null,
+  execucao text null,
+  constraint exercicios_pkey primary key (id)
+) TABLESPACE pg_default;
+
+create index IF not exists idx_exercicios_grupo on public.exercicios using btree (grupo) TABLESPACE pg_default;
+
+create trigger set_timestamp_exercicios BEFORE
+update on exercicios for EACH row
+execute FUNCTION set_timestamp ();
+
+create table public.ficha_exercicios (
+  id uuid not null default extensions.uuid_generate_v4 (),
+  series integer not null default 3,
+  repeticoes text not null,
+  carga numeric(6, 2) null,
+  descanso_segundos integer null default 60,
+  ordem integer null default 1,
+  observacoes text null,
+  criado_em timestamp without time zone null default now(),
+  atualizado_em timestamp without time zone null default now(),
+  exercicio_id uuid not null,
+  treino_id uuid not null,
+  tecnica text null,
+  tempo_segundos integer null,
+  cadencia text null,
+  constraint ficha_exercicios_pkey primary key (id),
+  constraint ficha_exercicios_exercicio_id_fkey foreign KEY (exercicio_id) references exercicios (id) on delete CASCADE,
+  constraint ficha_exercicios_treino_id_fkey foreign KEY (treino_id) references ficha_treinos (id),
+  constraint chk_descanso check (
+    (
+      (descanso_segundos >= 0)
+      and (descanso_segundos <= 600)
+    )
+  ),
+  constraint chk_series check (
+    (
+      (series > 0)
+      and (series < 20)
+    )
+  )
+) TABLESPACE pg_default;
+
+create index IF not exists idx_ficha_exercicios_treino_id on public.ficha_exercicios using btree (treino_id) TABLESPACE pg_default;
+
+create trigger set_timestamp_ficha_exercicios BEFORE
+update on ficha_exercicios for EACH row
+execute FUNCTION set_timestamp ();
+
+create trigger trg_auto_ordem_ficha_exercicios BEFORE INSERT on ficha_exercicios for EACH row
+execute FUNCTION definir_ordem_ficha_exercicios ();
+
+create table public.ficha_programacao (
+  id uuid not null default extensions.uuid_generate_v4 (),
+  ficha_id uuid null,
+  dia_semana integer not null,
+  ativo boolean null default true,
+  constraint ficha_programacao_pkey primary key (id),
+  constraint ficha_programacao_ficha_id_fkey foreign KEY (ficha_id) references fichas (id) on delete CASCADE
+) TABLESPACE pg_default;
+
+create table public.ficha_treinos (
+  id uuid not null default gen_random_uuid (),
+  ficha_id uuid null,
+  nome text not null,
+  descricao text null,
+  ordem integer not null default 1,
+  criado_em timestamp without time zone null default now(),
+  atualizado_em timestamp without time zone null default now(),
+  subdivisao text not null default 'A'::text,
+  subdivisao_ordem smallint GENERATED ALWAYS as (GREATEST(1, (ascii(subdivisao) - 64))) STORED null,
+  subdivisao_label text GENERATED ALWAYS as (('Treino '::text || subdivisao)) STORED null,
+  constraint ficha_treinos_pkey primary key (id),
+  constraint ficha_treinos_ficha_subdivisao_key unique (ficha_id, subdivisao),
+  constraint ficha_treinos_ficha_id_fkey foreign KEY (ficha_id) references fichas (id) on delete CASCADE
+) TABLESPACE pg_default;
+
+create index IF not exists idx_ficha_treinos_ficha_id on public.ficha_treinos using btree (ficha_id) TABLESPACE pg_default;
+
+create index IF not exists ficha_treinos_ficha_ordem_idx on public.ficha_treinos using btree (ficha_id, subdivisao_ordem, ordem) TABLESPACE pg_default;
+
+create trigger set_timestamp_ficha_treinos BEFORE
+update on ficha_treinos for EACH row
+execute FUNCTION set_timestamp ();
+
+create table public.fichas (
+  id uuid not null default extensions.uuid_generate_v4 (),
+  usuario_id uuid null,
+  nome text not null,
+  descricao text null,
+  criado_em timestamp without time zone null default now(),
+  atualizado_em timestamp without time zone null default now(),
+  nivel text null,
+  objetivo text null,
+  thumbnail_url text null,
+  capa_url text null,
+  visibilidade text not null default 'publica'::text,
+  constraint fichas_pkey primary key (id),
+  constraint fichas_usuario_id_fkey foreign KEY (usuario_id) references auth.users (id) on delete CASCADE,
+  constraint fichas_visibilidade_check check (
+    (
+      visibilidade = any (
+        array['publica'::text, 'privada'::text, 'oculta'::text]
+      )
+    )
+  )
+) TABLESPACE pg_default;
+
+create trigger set_timestamp_fichas BEFORE
+update on fichas for EACH row
+execute FUNCTION set_timestamp ();
+
+create table public.metodos_intensificacao (
+  id serial not null,
+  codigo text not null,
+  nome text not null,
+  descricao text null,
+  constraint metodos_intensificacao_pkey primary key (id),
+  constraint metodos_intensificacao_codigo_key unique (codigo)
+) TABLESPACE pg_default;
+
+create table public.midias (
+  id uuid not null default extensions.uuid_generate_v4 (),
+  tipo text null,
+  titulo text null,
+  url text not null,
+  criado_em timestamp without time zone null default now(),
+  constraint midias_pkey primary key (id)
+) TABLESPACE pg_default;
+
+create table public.notificacoes (
+  id uuid not null default extensions.uuid_generate_v4 (),
+  usuario_id uuid null,
+  titulo text null,
+  mensagem text null,
+  lida boolean null default false,
+  criado_em timestamp without time zone null default now(),
+  constraint notificacoes_pkey primary key (id),
+  constraint notificacoes_usuario_id_fkey foreign KEY (usuario_id) references auth.users (id)
+) TABLESPACE pg_default;
+
+create table public.perfis (
+  id uuid not null,
+  nome text null,
+  idade integer null,
+  peso numeric(6, 2) null,
+  altura numeric(6, 2) null,
+  objetivo public.objetivo_treino null default 'hipertrofia'::objetivo_treino,
+  nivel public.nivel_treino null default 'iniciante'::nivel_treino,
+  sexo text null,
+  foto_url text null,
+  criado_em timestamp without time zone null default now(),
+  atualizado_em timestamp without time zone null default now(),
+  constraint perfis_pkey primary key (id),
+  constraint perfis_id_fkey foreign KEY (id) references auth.users (id) on delete CASCADE
+) TABLESPACE pg_default;
+
+create table public.personal_records (
+  id uuid not null default extensions.uuid_generate_v4 (),
+  usuario_id uuid null,
+  exercicio_id uuid null,
+  carga numeric(6, 2) null,
+  repeticoes integer null,
+  data date null default CURRENT_DATE,
+  constraint personal_records_pkey primary key (id),
+  constraint personal_records_exercicio_id_fkey foreign KEY (exercicio_id) references exercicios (id) on delete CASCADE,
+  constraint personal_records_usuario_id_fkey foreign KEY (usuario_id) references auth.users (id) on delete CASCADE
+) TABLESPACE pg_default;
+
+create table public.planos_alimentares (
+  id uuid not null default extensions.uuid_generate_v4 (),
+  usuario_id uuid null,
+  nome text not null,
+  calorias_diarias integer null,
+  proteinas integer null,
+  carboidratos integer null,
+  gorduras integer null,
+  criado_em timestamp without time zone null default now(),
+  atualizado_em timestamp without time zone null default now(),
+  constraint planos_alimentares_pkey primary key (id),
+  constraint planos_alimentares_usuario_id_fkey foreign KEY (usuario_id) references auth.users (id) on delete CASCADE
+) TABLESPACE pg_default;
+
+create table public.planos_saas (
+  id uuid not null default extensions.uuid_generate_v4 (),
+  nome text not null,
+  preco_mensal numeric(10, 2) null,
+  descricao text null,
+  recursos jsonb null,
+  criado_em timestamp without time zone null default now(),
+  constraint planos_saas_pkey primary key (id)
+) TABLESPACE pg_default;
+
+create table public.refeicoes (
+  id uuid not null default extensions.uuid_generate_v4 (),
+  plano_id uuid null,
+  titulo text null,
+  horario time without time zone null,
+  calorias integer null,
+  proteinas integer null,
+  carboidratos integer null,
+  gorduras integer null,
+  descricao text null,
+  criado_em timestamp without time zone null default now(),
+  constraint refeicoes_pkey primary key (id),
+  constraint refeicoes_plano_id_fkey foreign KEY (plano_id) references planos_alimentares (id) on delete CASCADE
+) TABLESPACE pg_default;
+
+create table public.treinos_concluidos (
+  id uuid not null default extensions.uuid_generate_v4 (),
+  usuario_id uuid null,
+  ficha_id uuid null,
+  data date null default CURRENT_DATE,
+  duracao_minutos integer null,
+  calorias_queimadas integer null,
+  criado_em timestamp without time zone null default now(),
+  constraint treinos_concluidos_pkey primary key (id),
+  constraint treinos_concluidos_ficha_id_fkey foreign KEY (ficha_id) references fichas (id) on delete set null,
+  constraint treinos_concluidos_usuario_id_fkey foreign KEY (usuario_id) references auth.users (id) on delete CASCADE
+) TABLESPACE pg_default;
+
+create table public.refeicoes_consumidas (
+  id uuid not null default extensions.uuid_generate_v4 (),
+  usuario_id uuid not null,
+  data date not null,
+  horario time without time zone null,
+  tipo public.tipo_refeicao_enum null,
+  nome text not null,
+  total_calorias numeric not null,
+  total_proteina numeric not null,
+  total_carboidratos numeric not null,
+  total_gorduras numeric not null,
+  criado_em timestamp without time zone null default now(),
+  atualizado_em timestamp without time zone null default now(),
+  constraint refeicoes_consumidas_pkey primary key (id),
+  constraint refeicoes_consumidas_usuario_id_fkey foreign KEY (usuario_id) references auth.users (id) on delete CASCADE
+) TABLESPACE pg_default;
+
+create index IF not exists idx_refeicoes_consumidas_data on public.refeicoes_consumidas using btree (usuario_id, data) TABLESPACE pg_default;
+
+create trigger tr_refeicoes_consumidas_timestamp BEFORE
+update on refeicoes_consumidas for EACH row
+execute FUNCTION set_timestamp ();

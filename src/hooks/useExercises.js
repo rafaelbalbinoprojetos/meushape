@@ -67,9 +67,42 @@ export function useExercises(filters = {}) {
     setLoading(true);
     setError(null);
     try {
-      const { items: data, count } = await listExercises(filters);
-      setItems(data);
-      setTotal(typeof count === "number" ? count : data.length);
+      const { group, ...rest } = filters;
+      const normalizedGroup = group ? String(group).toLowerCase() : null;
+      const limit = normalizedGroup ? Math.max(rest.limit ?? 100, 500) : rest.limit;
+      const { items: data, count } = await listExercises({ ...rest, limit });
+
+      const normalize = (value) =>
+        (value || "")
+          .toString()
+          .normalize("NFD")
+          .replace(/[\u0300-\u036f]/g, "")
+          .toLowerCase()
+          .trim();
+
+      const groupAliases = {
+        peito: ["peito", "peitoral"],
+        costas: ["costas", "costa", "dorsal"],
+        ombro: ["ombro", "ombros", "deltoide", "deltoides"],
+        perna: ["perna", "pernas", "quadriceps", "quads", "posterior", "isquiotibiais"],
+        posterior: ["posterior", "gluteo", "gluteos"],
+        braco: ["braco", "bracos", "biceps", "triceps", "antebraco"],
+        core: ["core", "abdomen", "abdominal", "abdome"],
+        cardio: ["cardio", "corrida", "hiit", "aerobico"],
+        fullbody: ["fullbody", "full body", "corpo todo"],
+      };
+
+      const filtered =
+        normalizedGroup && normalizedGroup !== "all"
+          ? (data ?? []).filter((exercise) => {
+              const groupValue = normalize(exercise.grupo);
+              const candidates = groupAliases[normalizedGroup] || [normalizedGroup];
+              return candidates.some((value) => groupValue.includes(value));
+            })
+          : data ?? [];
+
+      setItems(filtered);
+      setTotal(typeof count === "number" ? count : filtered.length);
     } catch (err) {
       console.error("[useExercises] erro ao carregar exercicios:", err);
       const message = err?.message ?? "Nao foi possivel carregar os exercicios.";

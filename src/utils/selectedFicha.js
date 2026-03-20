@@ -22,17 +22,24 @@ function normalizeFicha(data) {
   };
 }
 
-export function saveSelectedFicha(rawData) {
+export function getSelectedFichaStorageKey(userId = null) {
+  const trimmed = typeof userId === "string" ? userId.trim() : "";
+  return trimmed ? `${STORAGE_KEY}:${trimmed}` : STORAGE_KEY;
+}
+
+export function saveSelectedFicha(rawData, userId = null) {
   if (!hasWindow()) return null;
   const normalized = normalizeFicha(rawData);
   if (!normalized) return null;
-  window.localStorage.setItem(STORAGE_KEY, JSON.stringify(normalized));
+  const storageKey = getSelectedFichaStorageKey(userId);
+  window.localStorage.setItem(storageKey, JSON.stringify(normalized));
   return normalized;
 }
 
-export function loadSelectedFicha() {
+export function loadSelectedFicha(userId = null) {
   if (!hasWindow()) return null;
-  const raw = window.localStorage.getItem(STORAGE_KEY);
+  const storageKey = getSelectedFichaStorageKey(userId);
+  const raw = window.localStorage.getItem(storageKey);
   if (!raw) return null;
   try {
     const parsed = JSON.parse(raw);
@@ -42,9 +49,13 @@ export function loadSelectedFicha() {
   }
 }
 
-export function clearSelectedFicha() {
+export function clearSelectedFicha(userId = null) {
   if (!hasWindow()) return;
-  window.localStorage.removeItem(STORAGE_KEY);
+  const storageKey = getSelectedFichaStorageKey(userId);
+  window.localStorage.removeItem(storageKey);
+  if (storageKey !== STORAGE_KEY) {
+    window.localStorage.removeItem(STORAGE_KEY);
+  }
 }
 
 export { STORAGE_KEY as SELECTED_FICHA_STORAGE_KEY };

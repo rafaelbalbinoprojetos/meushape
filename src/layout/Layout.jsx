@@ -1,4 +1,5 @@
 ﻿import React, { useCallback, useEffect, useMemo, useState } from "react";
+import { createPortal } from "react-dom";
 import { NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
 import toast, { Toaster } from "react-hot-toast";
 import SettingsMenu from "../components/SettingsMenu.jsx";
@@ -7,13 +8,19 @@ import NotificationPanel from "../components/NotificationPanel.jsx";
 import WelcomeModal from "../components/WelcomeModal.jsx";
 import PremiumPlansModal from "../components/PremiumPlansModal.jsx";
 import AudioPlaylistBar from "../components/AudioPlaylistBar.jsx";
+import WaterQuickActions from "../components/WaterQuickActions.jsx";
 import { useAuth } from "../context/AuthContext.jsx";
-import { NAV_LINKS, normalizeMobileNavSelection } from "../data/navigation.js";
+import { useTheme } from "../context/ThemeContext.jsx";
+import { MOBILE_NAV_LINKS, NAV_LINKS, normalizeMobileNavSelection } from "../data/navigation.js";
 import { DEFAULT_PLAN_ID } from "../data/plans.js";
+import { listReminders } from "../services/reminders.js";
 
 const BRAND_NAME = "MEU SHAPE";
-const API_BASE = (import.meta.env.VITE_API_BASE || "").replace(/\/$/, "");
+const FALLBACK_ORIGIN = typeof window !== "undefined" ? window.location.origin : "";
+const API_BASE = (import.meta.env.VITE_API_BASE || FALLBACK_ORIGIN).replace(/\/$/, "");
 const SUBSCRIPTION_ENDPOINT = `${API_BASE}/api/mercadopago/subscription`;
+const CHECKOUT_ENDPOINT = `${API_BASE}/api/mercadopago/checkout`;
+const NOTIFICATION_CLEAR_KEY = "meushape:notifications:cleared";
 
 const ICON_MAP = {
   dashboard: DashboardIcon,
@@ -22,7 +29,11 @@ const ICON_MAP = {
   fichas: PlansIcon,
   nutrition: NutritionIcon,
   evolution: EvolutionIcon,
+  insights: InsightsIcon,
+  history: HistoryIcon,
   assistant: AssistantIcon,
+  feed: FeedIcon,
+  energia: MusicIcon,
   settings: SettingsIcon,
 };
 
@@ -31,12 +42,20 @@ const NAV_ITEMS = NAV_LINKS.map((link) => ({
   icon: ICON_MAP[link.id] ?? DashboardIcon,
 }));
 
-const NAV_ITEMS_BY_PATH = new Map(NAV_ITEMS.map((item) => [item.to, item]));
+const MOBILE_ONLY_ITEMS = MOBILE_NAV_LINKS.filter(
+  (link) => !NAV_LINKS.some((nav) => nav.to === link.to),
+).map((link) => ({
+  ...link,
+  icon: ICON_MAP[link.id] ?? PlansIcon,
+}));
+
+const NAV_ITEMS_BY_PATH = new Map([...NAV_ITEMS, ...MOBILE_ONLY_ITEMS].map((item) => [item.to, item]));
 
 export default function Layout() {
   const location = useLocation();
   const navigate = useNavigate();
   const { user, signOut, updateUserMetadata } = useAuth();
+  const { isDark } = useTheme();
 
   const [menuOpen, setMenuOpen] = useState(false);
   const [searchTerm, setSearchTerm] = useState("");
@@ -45,10 +64,19 @@ export default function Layout() {
   const [notificationsLoading, setNotificationsLoading] = useState(false);
   const [notificationsError, setNotificationsError] = useState(null);
   const [notifications, setNotifications] = useState([]);
+  const [notificationsSeenCount, setNotificationsSeenCount] = useState(0);
+  const [hideReminderNotifications, setHideReminderNotifications] = useState(false);
+  const [visibleNotifications, setVisibleNotifications] = useState([]);
+  const [notificationsCleared, setNotificationsCleared] = useState(false);
+  const [lastNotificationCount, setLastNotificationCount] = useState(0);
   const [welcomeOpen, setWelcomeOpen] = useState(false);
   const [plansOpen, setPlansOpen] = useState(false);
   const [subscribingPlan, setSubscribingPlan] = useState(null);
   const [refreshVersion, setRefreshVersion] = useState(0);
+  const [remindersState, setRemindersState] = useState({ loading: false, items: [] });
+  const [reminderModal, setReminderModal] = useState(null);
+  const portalTarget = typeof document !== "undefined" ? document.body : null;
+  const remindersRef = React.useRef([]);
   const notificationContainerRef = React.useRef(null);
   const notificationPanelRef = React.useRef(null);
   const notificationButtonRef = React.useRef(null);
@@ -65,14 +93,215 @@ export default function Layout() {
   const onboardingComplete =
     userMetadata.completed_reading_onboarding ?? userMetadata.has_seen_welcome === true ?? false;
   const mobileNavPreference = userMetadata.mobile_nav_paths;
+  const currentPageTitle =
+    location.pathname === "/" ? "Painel pessoal" : NAV_ITEMS_BY_PATH.get(location.pathname)?.label;
+  const logoSrc = isDark ? "/images/logo_light.png" : "/images/logo_dark.png";
 
   const mobileNavItems = useMemo(() => {
     const paths = normalizeMobileNavSelection(mobileNavPreference);
     return paths.map((path) => NAV_ITEMS_BY_PATH.get(path)).filter(Boolean);
   }, [mobileNavPreference]);
 
+  const formatReminderDays = useCallback((days) => {
+    if (!Array.isArray(days) || days.length === 0) return "Todos os dias";
+    const labels = ["Seg", "Ter", "Qua", "Qui", "Sex", "Sab", "Dom"];
+    const normalized = days
+      .map((value) => Number(value))
+      .filter((value) => Number.isFinite(value) && value >= 1 && value <= 7)
+      .sort((a, b) => a - b);
+    return normalized.map((value) => labels[value - 1] || value).join(", ");
+  }, [notifications.length]);
+
+  const reminderNotifications = useMemo(() => {
+    const items = remindersState.items || [];
+    if (notificationsCleared) {
+      return [];
+    }
+    if (hideReminderNotifications) {
+      return [];
+    }
+    return items
+      .filter((reminder) => reminder?.ativo)
+      .slice(0, 4)
+      .map((reminder) => ({
+        id: `reminder-${reminder.id}`,
+        type: "reminder",
+        title: "Lembrete ativo",
+        message: `${reminder.titulo} • ${String(reminder.horario || "").slice(0, 5)} • ${formatReminderDays(
+          reminder.dias_semana,
+        )}`,
+        time: "Agora",
+      }));
+  }, [formatReminderDays, hideReminderNotifications, remindersState.items]);
+
+  const combinedNotifications = useMemo(() => {
+    if (notificationsCleared) {
+      return [];
+    }
+    return [...reminderNotifications, ...notifications];
+  }, [notifications, notificationsCleared, reminderNotifications]);
+
+  const handleClearNotifications = useCallback(() => {
+    setNotifications([]);
+    setNotificationsSeenCount(0);
+    setHideReminderNotifications(true);
+    setVisibleNotifications([]);
+    setNotificationsCleared(true);
+    if (typeof localStorage !== "undefined") {
+      localStorage.setItem(NOTIFICATION_CLEAR_KEY, "true");
+    }
+  }, []);
+
+  const badgeCount = notificationsCleared ? 0 : Math.max(0, (notifications?.length ?? 0) - notificationsSeenCount);
+
+  const normalizeReminderDays = useCallback((days) => {
+    if (!Array.isArray(days)) return [];
+    const map = {
+      seg: 1,
+      ter: 2,
+      qua: 3,
+      qui: 4,
+      sex: 5,
+      sab: 6,
+      dom: 7,
+    };
+    return days
+      .map((value) => {
+        if (typeof value === "number") {
+          if (value >= 1 && value <= 7) return value;
+          if (value >= 0 && value <= 6) return value === 0 ? 7 : value;
+          return null;
+        }
+        if (typeof value === "string") {
+          const key = value.toLowerCase().trim().slice(0, 3);
+          return map[key] ?? null;
+        }
+        return null;
+      })
+      .filter(Boolean);
+  }, []);
+
+  const normalizeReminderTime = useCallback((time) => {
+    if (!time) return null;
+    const raw = String(time).trim();
+    if (raw.length >= 5) return raw.slice(0, 5);
+    return raw;
+  }, []);
+
+  const parseTimeToMinutes = useCallback((value) => {
+    if (!value) return null;
+    const parts = String(value).split(":");
+    if (parts.length < 2) return null;
+    const hours = Number(parts[0]);
+    const minutes = Number(parts[1]);
+    if (!Number.isFinite(hours) || !Number.isFinite(minutes)) return null;
+    return hours * 60 + minutes;
+  }, []);
+
+  const triggerReminder = useCallback((reminder) => {
+    const title = reminder?.titulo || "Lembrete do Shape";
+    toast(`🔔 ${title}`, { duration: 6000 });
+    setReminderModal({
+      titulo: title,
+      horario: normalizeReminderTime(reminder?.horario),
+      dias: formatReminderDays(reminder?.dias_semana),
+    });
+    if (typeof Notification !== "undefined" && Notification.permission === "granted") {
+      try {
+        new Notification("Meu Shape", {
+          body: title,
+          icon: "/images/logo_light.png",
+        });
+      } catch (error) {
+        console.warn("[layout] falha ao disparar notificacao:", error);
+      }
+    }
+  }, [formatReminderDays, normalizeReminderTime]);
+
+  useEffect(() => {
+    if (!reminderModal) return undefined;
+    const timeout = window.setTimeout(() => setReminderModal(null), 12000);
+    return () => window.clearTimeout(timeout);
+  }, [reminderModal]);
+
+  useEffect(() => {
+    if (!user?.id) {
+      setRemindersState({ loading: false, items: [] });
+      remindersRef.current = [];
+      return undefined;
+    }
+
+    let active = true;
+    const loadReminders = async () => {
+      setRemindersState((prev) => ({ ...prev, loading: true }));
+      try {
+        const items = await listReminders({ usuarioId: user.id });
+        if (!active) return;
+        remindersRef.current = items;
+        setRemindersState({ loading: false, items });
+      } catch (error) {
+        console.error("[layout] falha ao carregar lembretes:", error);
+        if (!active) return;
+        setRemindersState((prev) => ({ ...prev, loading: false }));
+      }
+    };
+
+    loadReminders();
+
+    const handleRemindersUpdated = () => {
+      loadReminders();
+    };
+
+    window.addEventListener("meushape:reminders-updated", handleRemindersUpdated);
+    return () => {
+      active = false;
+      window.removeEventListener("meushape:reminders-updated", handleRemindersUpdated);
+    };
+  }, [user?.id]);
+
+  useEffect(() => {
+    if (!user?.id) return undefined;
+
+    const checkReminders = () => {
+      const now = new Date();
+      const todayKey = now.toISOString().slice(0, 10);
+      const currentTime = now.toTimeString().slice(0, 5);
+      const currentDay = ((now.getDay() + 6) % 7) + 1;
+
+      remindersRef.current.forEach((reminder) => {
+        if (!reminder?.ativo) return;
+        const reminderTime = normalizeReminderTime(reminder.horario);
+        if (!reminderTime) return;
+        const reminderMinutes = parseTimeToMinutes(reminderTime);
+        const nowMinutes = now.getHours() * 60 + now.getMinutes();
+        if (reminderMinutes == null || nowMinutes == null) return;
+        const diffMinutes = nowMinutes - reminderMinutes;
+        if (diffMinutes < 0 || diffMinutes > 1) return;
+        const allowedDays = normalizeReminderDays(reminder.dias_semana);
+        if (allowedDays.length > 0 && !allowedDays.includes(currentDay)) return;
+
+        const firedKey = `meushape:reminder:${reminder.id}`;
+        const lastFired = localStorage.getItem(firedKey);
+        const currentStamp = `${todayKey} ${currentTime}`;
+        if (lastFired === currentStamp) return;
+        localStorage.setItem(firedKey, currentStamp);
+        triggerReminder(reminder);
+      });
+    };
+
+    checkReminders();
+    const interval = window.setInterval(checkReminders, 15000);
+    return () => window.clearInterval(interval);
+  }, [normalizeReminderDays, normalizeReminderTime, triggerReminder, user?.id]);
+
   useEffect(() => {
     if (!notificationsOpen) return undefined;
+    setNotificationsSeenCount((prev) => Math.max(prev, notifications.length));
+    if (notificationsCleared) {
+      setVisibleNotifications([]);
+    } else {
+      setVisibleNotifications(combinedNotifications);
+    }
 
     const handlePointerDown = (event) => {
       if (
@@ -99,7 +328,17 @@ export default function Layout() {
       document.removeEventListener("touchstart", handlePointerDown);
       document.removeEventListener("keydown", handleKeyDown);
     };
-  }, [notificationsOpen]);
+  }, [combinedNotifications, notifications.length, notificationsCleared, notificationsOpen]);
+
+  useEffect(() => {
+    if (notifications.length > lastNotificationCount) {
+      setNotificationsCleared(false);
+      if (typeof localStorage !== "undefined") {
+        localStorage.removeItem(NOTIFICATION_CLEAR_KEY);
+      }
+    }
+    setLastNotificationCount(notifications.length);
+  }, [lastNotificationCount, notifications.length]);
 
   useEffect(() => {
     if (!mobileSearchOpen) return undefined;
@@ -148,6 +387,14 @@ export default function Layout() {
     }
 
     setNotificationsLoading(true);
+    const wasCleared = typeof localStorage !== "undefined" && localStorage.getItem(NOTIFICATION_CLEAR_KEY) === "true";
+    if (wasCleared) {
+      setNotifications([]);
+      setNotificationsCleared(true);
+      setNotificationsError(null);
+      setNotificationsLoading(false);
+      return;
+    }
     const sampleMessages = [
       {
         id: `shape-welcome-${user.id}`,
@@ -223,10 +470,12 @@ export default function Layout() {
   const handleOpenNotifications = useCallback(() => {
     setNotificationsOpen(true);
     setMenuOpen(false);
+    setNotificationsSeenCount((prev) => Math.max(prev, notifications.length));
   }, []);
 
   const handleCloseNotifications = useCallback(() => {
     setNotificationsOpen(false);
+    setNotificationsSeenCount((prev) => Math.max(prev, notifications.length));
   }, []);
 
   const handleToggleNotifications = useCallback(() => {
@@ -235,6 +484,7 @@ export default function Layout() {
       if (next) {
         const event = new CustomEvent("meushape:close-settings-menu");
         window.dispatchEvent(event);
+        setNotificationsSeenCount((prev) => Math.max(prev, notifications.length));
       }
       return next;
     });
@@ -278,6 +528,11 @@ export default function Layout() {
         return;
       }
 
+      if (selectedPlan !== "premium") {
+        toast.success("Plano gratuito já está disponível. Para recursos avançados, escolha o Shape Pro.");
+        return;
+      }
+
       try {
         toast.loading("Redirecionando para o Mercado Pago...", { id: "subscription" });
 
@@ -314,6 +569,54 @@ export default function Layout() {
     [user],
   );
 
+  const handleOneTimeCheckout = useCallback(
+    async (selectedPlan = DEFAULT_PLAN_ID) => {
+      if (!user) {
+        toast.error("Faça login para concluir a assinatura.");
+        return;
+      }
+
+      if (selectedPlan !== "premium") {
+        toast.success("Plano gratuito já está disponível. Para recursos avançados, escolha o Shape Pro.");
+        return;
+      }
+
+      try {
+        toast.loading("Redirecionando para o Mercado Pago...", { id: "subscription" });
+
+        const response = await fetch(CHECKOUT_ENDPOINT, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            plan: selectedPlan,
+            userId: user.id,
+            email: user.email,
+          }),
+        });
+
+        if (!response.ok) {
+          const payload = await response.json().catch(() => ({}));
+          throw new Error(payload.error ?? "Não foi possível criar o checkout agora.");
+        }
+
+        const payload = await response.json();
+        toast.dismiss("subscription");
+
+        if (payload.checkoutUrl) {
+          window.location.href = payload.checkoutUrl;
+          return;
+        }
+
+        toast.success("Checkout criado! Verifique seu email para concluir o processo.");
+      } catch (error) {
+        toast.dismiss("subscription");
+        toast.error(error?.message ?? "Erro inesperado ao criar o checkout.");
+        console.error("[layout] Erro ao criar checkout:", error);
+      }
+    },
+    [user],
+  );
+
   const handleSubscribe = useCallback(
     (planId) => {
       setSubscribingPlan(planId);
@@ -328,22 +631,30 @@ export default function Layout() {
         position="top-right"
         toastOptions={{
           className:
-            "rounded-xl border border-white/40 bg-[#F5F7FB]/95 px-4 py-3 text-sm text-[#1f2933] shadow-lg backdrop-blur",
+            "rounded-xl border border-[#0f1f3c]/30 bg-[#0f1f3c]/95 px-4 py-3 text-sm text-white shadow-lg backdrop-blur dark:border-white/20 dark:bg-slate-900/95",
+          style: {
+            color: "#ffffff",
+            background: "rgba(15,31,60,0.95)",
+            border: "1px solid rgba(50,197,255,0.35)",
+          },
         }}
       />
 
       <aside
-        className={`fixed inset-y-0 left-0 z-40 w-[18rem] transform border-r border-white/40 bg-[#F5F7FB]/90 backdrop-blur-md transition-transform duration-300 dark:border-white/10 dark:bg-slate-900/90 md:sticky md:top-0 md:inset-auto md:self-start md:z-20 md:h-screen md:w-[19rem] md:flex-shrink-0 md:translate-x-0 md:rounded-none md:bg-[#F5F7FB]/85 md:shadow-none md:dark:bg-slate-900/85 lg:w-[21rem] ${
+        className={`fixed inset-y-0 left-0 z-40 w-[18rem] max-h-screen overflow-y-auto transform border-r border-white/40 bg-[#F5F7FB]/90 pb-6 backdrop-blur-md transition-transform duration-300 dark:border-white/10 dark:bg-slate-900/90 md:sticky md:top-0 md:inset-auto md:self-start md:z-20 md:h-screen md:max-h-none md:w-[19rem] md:flex-shrink-0 md:translate-x-0 md:rounded-none md:bg-[#F5F7FB]/85 md:shadow-none md:dark:bg-slate-900/85 lg:w-[21rem] ${
           menuOpen ? "translate-x-0" : "-translate-x-full md:translate-x-0"
         }`}
         aria-label="Navegação principal"
       >
         <div className="flex items-center justify-between border-b border-white/35 px-5 py-4 dark:border-white/10">
-          <div>
-            <span className="text-xs uppercase tracking-[0.28em] text-[#4A5568]/70 dark:text-[#cfc2ff]/60">
-              Plataforma de Leitura
-            </span>
-            <h1 className="mt-2 text-xl font-semibold text-[#1f2933] dark:text-[#f8f6ff]">{BRAND_NAME}</h1>
+          <div className="flex items-center gap-3">
+            <img src={logoSrc} alt="Logo Meu Shape" className="h-10 w-10 rounded-xl object-contain" />
+            <div>
+              <span className="text-xs uppercase tracking-[0.28em] text-[#4A5568]/70 dark:text-[#cfc2ff]/60">
+                Performance construída com inteligência
+              </span>
+              <h1 className="mt-1 text-xl font-semibold text-[#1f2933] dark:text-[#f8f6ff]">{BRAND_NAME}</h1>
+            </div>
           </div>
 
           <button
@@ -438,12 +749,15 @@ export default function Layout() {
                 >
                   <MenuIcon className="h-5 w-5" />
                 </button>
-                <div>
-                  <p className="text-xs uppercase tracking-[0.28em] text-[#4A5568]/70 dark:text-[#cfc2ff]/70">Bem-vindo</p>
-                  <h2 className="text-base font-semibold text-[#1f2933] leading-tight dark:text-white md:text-lg">
-                    {location.pathname === "/"
-                      ? "Painel pessoal"
-                      : NAV_ITEMS_BY_PATH.get(location.pathname)?.label}
+                <img
+                  src={logoSrc}
+                  alt="Logo Meu Shape"
+                  className="h-9 w-9 rounded-xl object-contain md:hidden"
+                />
+                <div className="hidden md:block">
+                  <p className="text-[11px] uppercase tracking-[0.28em] text-[#4A5568]/70 dark:text-[#cfc2ff]/70">Bem-vindo</p>
+                  <h2 className="text-sm font-semibold text-[#1f2933] leading-tight dark:text-white md:text-base">
+                    {currentPageTitle}
                   </h2>
                 </div>
               </div>
@@ -483,9 +797,9 @@ export default function Layout() {
                     aria-label="Abrir notificações"
                   >
                     <BellIcon className="h-5 w-5" />
-                    {notifications.length > 0 ? (
+                    {!notificationsOpen && badgeCount > 0 ? (
                       <span className="absolute -right-1 -top-1 grid h-5 w-5 place-items-center rounded-full bg-[#32C5FF] text-[11px] font-semibold text-white shadow">
-                        {notifications.length}
+                        {badgeCount}
                       </span>
                     ) : null}
                   </button>
@@ -508,10 +822,38 @@ export default function Layout() {
               open={notificationsOpen}
               loading={notificationsLoading}
               error={notificationsError}
-              notifications={notifications}
+              notifications={notificationsCleared ? [] : visibleNotifications}
               onClose={handleCloseNotifications}
               container={typeof document !== "undefined" ? document.body : null}
             />
+            {reminderModal && portalTarget
+              ? createPortal(
+                  <div className="fixed inset-0 z-[999] flex items-center justify-center bg-slate-900/50 px-4 py-8 backdrop-blur-sm">
+                    <div className="w-full max-w-sm rounded-[28px] border border-white/20 bg-white/95 p-5 shadow-2xl dark:border-white/10 dark:bg-slate-900/95">
+                      <p className="text-xs uppercase tracking-[0.35em] text-[rgb(var(--text-subtle))]">Lembrete</p>
+                      <h3 className="mt-3 text-xl font-semibold text-[rgb(var(--text-primary))]">
+                        {reminderModal.titulo}
+                      </h3>
+                      <p className="mt-2 text-sm text-[rgb(var(--text-secondary))]">
+                        {reminderModal.horario ? `Horario: ${reminderModal.horario}` : "Horario nao informado"}
+                      </p>
+                      <p className="text-sm text-[rgb(var(--text-secondary))]">
+                        {reminderModal.dias ? `Dias: ${reminderModal.dias}` : "Dias nao informados"}
+                      </p>
+                      <div className="mt-5 flex justify-end">
+                        <button
+                          type="button"
+                          onClick={() => setReminderModal(null)}
+                          className="rounded-full border border-[rgb(var(--border-subtle))] bg-[rgb(var(--surface-card))]/80 px-4 py-2 text-xs font-semibold uppercase tracking-[0.2em] text-[rgb(var(--text-secondary))] transition hover:text-[rgb(var(--text-primary))]"
+                        >
+                          Ok
+                        </button>
+                      </div>
+                    </div>
+                  </div>,
+                  portalTarget,
+                )
+              : null}
             {mobileSearchOpen && (
               <>
                 <div className="fixed inset-0 z-30 bg-slate-900/40 backdrop-blur-sm md:hidden" />
@@ -544,9 +886,16 @@ export default function Layout() {
             )}
 
             <main className="flex-1 overflow-y-auto px-4 pb-24 pt-6 md:px-8 bg-[rgb(var(--surface-base))]">
+              <div className="mb-4 px-1 md:hidden">
+                <p className="text-[11px] uppercase tracking-[0.28em] text-[#4A5568]/70 dark:text-[#cfc2ff]/70">Bem-vindo</p>
+                <h2 className="text-sm font-semibold text-[#1f2933] leading-tight dark:text-white">
+                  {currentPageTitle}
+                </h2>
+              </div>
               <Outlet />
             </main>
             <AudioPlaylistBar />
+            <WaterQuickActions />
 
         </div>
 
@@ -561,6 +910,7 @@ export default function Layout() {
           open={plansOpen}
           onClose={handleClosePlans}
           onSubscribe={handleSubscribe}
+          onCheckoutPix={handleOneTimeCheckout}
           subscribingPlanId={subscribingPlan}
           hasPremiumAccess={subscriptionTier === "premium" || trialActive}
           currentPlanId={subscriptionTier}
@@ -660,6 +1010,26 @@ function EvolutionIcon({ className }) {
   );
 }
 
+function InsightsIcon({ className }) {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" className={className} aria-hidden="true">
+      <path d="M4 18V6a2 2 0 012-2h7l5 5v9a2 2 0 01-2 2H6a2 2 0 01-2-2z" stroke="currentColor" strokeWidth="1.5" strokeLinejoin="round" />
+      <path d="M11 10h5M8 13h8M8 16h5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+      <path d="M13 4v5h5" stroke="currentColor" strokeWidth="1.5" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
+function HistoryIcon({ className }) {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" className={className} aria-hidden="true">
+      <path d="M4 4v16h16" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+      <path d="M7.5 16.5V12M12 16.5V8M16.5 16.5V10" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+      <path d="M7.5 9.5l4.5-2.5 4.5 1.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
 function AssistantIcon({ className }) {
   return (
     <svg viewBox="0 0 24 24" fill="none" className={className} aria-hidden="true">
@@ -670,6 +1040,27 @@ function AssistantIcon({ className }) {
         strokeLinejoin="round"
       />
       <path d="M9 10.75h6M9 13.75h4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+    </svg>
+  );
+}
+
+function MusicIcon({ className }) {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" className={className} aria-hidden="true">
+      <path d="M14 4.5l5 1v8.25" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+      <path d="M14 8.5l5 1" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+      <circle cx="9" cy="15.5" r="2.5" stroke="currentColor" strokeWidth="1.5" />
+      <circle cx="17" cy="15.5" r="2.5" stroke="currentColor" strokeWidth="1.5" />
+      <path d="M11.5 14V6.5l5-1V9" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
+function FeedIcon({ className }) {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" className={className} aria-hidden="true">
+      <rect x="4" y="4" width="16" height="16" rx="3" stroke="currentColor" strokeWidth="1.5" />
+      <path d="M8 9h8M8 12h8M8 15h5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
     </svg>
   );
 }

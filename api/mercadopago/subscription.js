@@ -37,7 +37,7 @@ export default async function handler(req, res) {
   const planKey = typeof plan === "string" ? plan.toLowerCase() : DEFAULT_PLAN_ID;
   const planConfig = PLAN_DETAILS[planKey] ?? PLAN_DETAILS[DEFAULT_PLAN_ID];
 
-  const origin = req.headers.origin || process.env.APP_ORIGIN || "https://grana.app";
+  const origin = req.headers.origin || process.env.APP_ORIGIN || "https://meushape.ai";
   const successUrl = process.env.MERCADOPAGO_SUCCESS_URL || `${origin}/assinatura/sucesso`;
   const notificationUrl = process.env.MERCADOPAGO_WEBHOOK_URL;
 

@@ -3,16 +3,27 @@ import { useAuth } from "../context/AuthContext.jsx";
 import { fetchEvolutionStats, upsertMeasurement, deleteMeasurement } from "../services/evolution.js";
 import ReactECharts from "echarts-for-react";
 import * as echarts from "echarts";
+import { useTheme } from "../context/ThemeContext.jsx";
 
 function StatCard({ label, value, detail, spark }) {
+  const { themeId } = useTheme();
   return (
-    <div className="rounded-3xl border border-white/10 bg-gradient-to-br from-[#050914] via-[#0f1f3c] to-[#10203a] p-5 text-white shadow-lg shadow-black/30">
-      <p className="text-xs uppercase tracking-[0.35em] text-white/60">{label}</p>
-      <p className="mt-3 text-3xl font-semibold">{value}</p>
-      {detail ? <p className="text-sm text-white/70">{detail}</p> : null}
+    <div
+      className="rounded-3xl border p-5 shadow-lg"
+      style={{
+        borderColor: "var(--border-soft)",
+        backgroundImage:
+          "linear-gradient(150deg, rgba(var(--color-accent-primary),0.08), rgba(var(--color-secondary-primary),0.08)), linear-gradient(165deg, rgba(var(--surface-card),0.96), rgba(var(--surface-card),0.9))",
+        color: "rgb(var(--text-primary))",
+        boxShadow: "0 20px 48px -32px rgba(0,0,0,0.28)",
+      }}
+    >
+      <p className="text-xs uppercase tracking-[0.35em] text-[rgb(var(--text-secondary))]">{label}</p>
+      <p className="mt-3 text-3xl font-semibold text-[rgb(var(--text-primary))]">{value}</p>
+      {detail ? <p className="text-sm text-[rgb(var(--text-secondary))]">{detail}</p> : null}
       {spark ? (
         <div className="mt-2">
-          <ReactECharts option={spark} style={{ height: 48 }} opts={{ renderer: "svg" }} />
+          <ReactECharts key={themeId} option={spark} style={{ height: 48 }} opts={{ renderer: "svg" }} />
         </div>
       ) : null}
     </div>
@@ -84,6 +95,7 @@ function PRList({ items }) {
 
 export default function EvolutionPage() {
   const { user } = useAuth();
+  const { isDark, themeId } = useTheme();
   const [stats, setStats] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -118,6 +130,33 @@ export default function EvolutionPage() {
     prancha_tempo_seg: "",
     ficha_id: "",
   });
+
+  const themeColors = useMemo(() => {
+    if (typeof window === "undefined") {
+      return {
+        textPrimary: "rgb(15, 31, 60)",
+        textSecondary: "rgb(60, 78, 102)",
+        textSubtle: "rgb(113, 132, 161)",
+        borderSoft: "rgba(15, 31, 60, 0.1)",
+        tooltipBg: isDark ? "rgba(12,18,28,0.9)" : "rgba(255,255,255,0.95)",
+        tooltipText: isDark ? "#f4f7fb" : "rgb(15, 31, 60)",
+      };
+    }
+    const root = document.documentElement;
+    const read = (name, fallback) => {
+      const value = getComputedStyle(root).getPropertyValue(name).trim();
+      return value || fallback;
+    };
+    const asRgb = (value, fallback) => `rgb(${value || fallback})`;
+    return {
+      textPrimary: asRgb(read("--text-primary"), "15 31 60"),
+      textSecondary: asRgb(read("--text-secondary"), "60 78 102"),
+      textSubtle: asRgb(read("--text-subtle"), "113 132 161"),
+      borderSoft: read("--border-soft", "rgba(15, 31, 60, 0.1)"),
+      tooltipBg: isDark ? "rgba(12,18,28,0.9)" : "rgba(255,255,255,0.95)",
+      tooltipText: isDark ? "#f4f7fb" : "rgb(15, 31, 60)",
+    };
+  }, [isDark, themeId]);
 
   useEffect(() => {
     let active = true;
@@ -181,7 +220,7 @@ export default function EvolutionPage() {
       cintura: buildSpark("cintura", "#67FF9A"),
       bf: buildSpark("gordura_corporal", "#F5B759"),
     };
-  }, [medidasChrono]);
+  }, [medidasChrono, themeColors]);
 
   const summaryDeltas = useMemo(() => {
     if (!ultimaMedida || !primeiraMedida) return null;
@@ -198,7 +237,7 @@ export default function EvolutionPage() {
       cintura: primeiraMedida.cintura != null && ultimaMedida.cintura != null ? `${(Number(ultimaMedida.cintura) - Number(primeiraMedida.cintura)).toFixed(1)} cm` : null,
       bf: delta("gordura_corporal"),
     };
-  }, [primeiraMedida, ultimaMedida]);
+  }, [primeiraMedida, ultimaMedida, themeColors]);
   const radarOptions = useMemo(() => {
     if (!medidas || medidas.length === 0) return null;
     const metrics = [
@@ -268,21 +307,21 @@ export default function EvolutionPage() {
       backgroundColor: "transparent",
       tooltip: {
         trigger: "item",
-        backgroundColor: "rgba(0,0,0,0.6)",
-        borderColor: "rgba(255,255,255,0.1)",
+        backgroundColor: themeColors.tooltipBg,
+        borderColor: themeColors.borderSoft,
         borderWidth: 1,
-        textStyle: { color: "#fff", fontSize: 12 },
+        textStyle: { color: themeColors.tooltipText, fontSize: 12 },
         padding: 10,
       },
       legend: {
         data: seriesData.map((s) => s.name),
         top: 10,
-        textStyle: { color: "rgba(255,255,255,0.85)", fontSize: 13 },
+        textStyle: { color: themeColors.textPrimary, fontSize: 13 },
       },
       radar: {
         name: {
           textStyle: {
-            color: "rgba(255,255,255,0.8)",
+            color: themeColors.textSecondary,
             fontSize: 13,
             fontWeight: "500",
             padding: [4, 6],
@@ -296,20 +335,20 @@ export default function EvolutionPage() {
           lineStyle: {
             width: 1.2,
             color: [
-              "rgba(255,255,255,0.05)",
-              "rgba(255,255,255,0.08)",
-              "rgba(255,255,255,0.12)",
-              "rgba(255,255,255,0.16)",
-              "rgba(255,255,255,0.20)",
-              "rgba(255,255,255,0.25)",
+              themeColors.borderSoft,
+              themeColors.borderSoft,
+              themeColors.borderSoft,
+              themeColors.borderSoft,
+              themeColors.borderSoft,
+              themeColors.borderSoft,
             ],
           },
         },
         splitArea: {
           areaStyle: {
             color: [
-              "rgba(255,255,255,0.01)",
-              "rgba(255,255,255,0.02)",
+              "rgba(0,0,0,0.01)",
+              "rgba(0,0,0,0.02)",
               "rgba(0,140,255,0.03)",
               "rgba(0,140,255,0.04)",
               "rgba(0,140,255,0.05)",
@@ -319,7 +358,7 @@ export default function EvolutionPage() {
         },
         axisLine: {
           lineStyle: {
-            color: "rgba(255,255,255,0.1)",
+            color: themeColors.borderSoft,
             width: 1,
           },
         },
@@ -334,7 +373,7 @@ export default function EvolutionPage() {
         },
       ],
     };
-  }, [medidas]);
+  }, [medidas, themeColors]);
 
   const lineOptionsByMetric = useMemo(() => {
     if (medidasChrono.length === 0) return [];
@@ -353,15 +392,15 @@ export default function EvolutionPage() {
         backgroundColor: "transparent",
         tooltip: {
           trigger: "axis",
-          backgroundColor: "rgba(0, 0, 0, 0.6)",
-          borderColor: "rgba(255, 255, 255, 0.1)",
+          backgroundColor: themeColors.tooltipBg,
+          borderColor: themeColors.borderSoft,
           borderWidth: 1,
           padding: 10,
-          textStyle: { color: "#fff", fontSize: 12 },
+          textStyle: { color: themeColors.tooltipText, fontSize: 12 },
           axisPointer: {
             type: "line",
             lineStyle: {
-              color: "rgba(255,255,255,0.3)",
+              color: themeColors.textSubtle,
               width: 1,
             },
           },
@@ -371,10 +410,10 @@ export default function EvolutionPage() {
           data: categories,
           boundaryGap: false,
           axisLine: {
-            lineStyle: { color: "rgba(255,255,255,0.15)" },
+            lineStyle: { color: themeColors.borderSoft },
           },
           axisLabel: {
-            color: "rgba(255,255,255,0.7)",
+            color: themeColors.textSecondary,
             fontSize: 11,
           },
         },
@@ -383,10 +422,10 @@ export default function EvolutionPage() {
           axisLine: { show: false },
           splitLine: {
             show: true,
-            lineStyle: { color: "rgba(255,255,255,0.06)" },
+            lineStyle: { color: themeColors.borderSoft },
           },
           axisLabel: {
-            color: "rgba(255,255,255,0.5)",
+            color: themeColors.textSecondary,
             fontSize: 11,
           },
         },
@@ -430,7 +469,7 @@ export default function EvolutionPage() {
         ],
       },
     }));
-  }, [medidasChrono]);
+  }, [medidasChrono, themeColors]);
 
   const compareOptions = useMemo(() => {
     if (!primeiraMedida || !ultimaMedida) return null;
@@ -478,38 +517,38 @@ export default function EvolutionPage() {
       },
       tooltip: {
         trigger: "axis",
-        backgroundColor: "rgba(0,0,0,0.6)",
-        borderColor: "rgba(255,255,255,0.1)",
+        backgroundColor: themeColors.tooltipBg,
+        borderColor: themeColors.borderSoft,
         borderWidth: 1,
         padding: 10,
-        textStyle: { color: "#fff", fontSize: 12 },
+        textStyle: { color: themeColors.tooltipText, fontSize: 12 },
         axisPointer: {
           type: "shadow",
-          shadowStyle: { color: "rgba(255,255,255,0.05)" },
+          shadowStyle: { color: themeColors.borderSoft },
         },
       },
       legend: {
         data: ["Antes", "Depois"],
         top: 10,
-        textStyle: { color: "rgba(255,255,255,0.8)" },
+        textStyle: { color: themeColors.textPrimary },
         itemWidth: 14,
         itemHeight: 8,
       },
       xAxis: {
         type: "value",
-        axisLabel: { color: "rgba(255,255,255,0.5)", fontSize: 12 },
-        splitLine: { lineStyle: { color: "rgba(255,255,255,0.06)" } },
+        axisLabel: { color: themeColors.textSecondary, fontSize: 12 },
+        splitLine: { lineStyle: { color: themeColors.borderSoft } },
       },
       yAxis: {
         type: "category",
         data: categories,
         axisLabel: {
-          color: "rgba(255,255,255,0.75)",
+          color: themeColors.textPrimary,
           fontSize: 12,
           margin: 12,
           interval: 0,
         },
-        axisLine: { lineStyle: { color: "rgba(255,255,255,0.15)" } },
+        axisLine: { lineStyle: { color: themeColors.borderSoft } },
       },
       grid: { left: "10%", right: "8%", top: "18%", bottom: "12%" },
       series: [
@@ -553,7 +592,7 @@ export default function EvolutionPage() {
       animationDuration: 800,
       animationEasing: "cubicOut",
     };
-  }, [primeiraMedida, ultimaMedida]);
+  }, [primeiraMedida, ultimaMedida, themeColors]);
 
   const bfDonutOption = useMemo(() => {
     if (!ultimaMedida?.gordura_corporal && ultimaMedida?.gordura_corporal !== 0) return null;
@@ -569,11 +608,11 @@ export default function EvolutionPage() {
         textStyle: {
           fontSize: 26,
           fontWeight: "bold",
-          color: "#fff",
+          color: themeColors.textPrimary,
         },
         subtextStyle: {
           fontSize: 13,
-          color: "rgba(255,255,255,0.6)",
+          color: themeColors.textSecondary,
         },
       },
       series: [
@@ -901,7 +940,7 @@ export default function EvolutionPage() {
         </div>
       </section>
 
-      <section className="rounded-[32px] border border-white/10 bg-white/80 p-6 shadow-xl dark:border-slate-800 dark:bg-slate-900/70">
+      <section id="medidas-form" className="rounded-[32px] border border-white/10 bg-white/80 p-6 shadow-xl dark:border-slate-800 dark:bg-slate-900/70">
         <p className="text-xs uppercase tracking-[0.35em] text-[rgb(var(--text-subtle))]">Linha temporal</p>
         <h2 className="text-xl font-semibold text-[rgb(var(--text-primary))]">Medidas recentes</h2>
         <div className="mt-4 grid gap-6 lg:grid-cols-2">
@@ -970,7 +1009,7 @@ export default function EvolutionPage() {
           {loading ? (
             <div className="h-64 animate-pulse rounded-3xl border border-white/20 bg-white/50 dark:border-slate-800 dark:bg-slate-900/50" />
           ) : radarOptions ? (
-            <ReactECharts option={radarOptions} style={{ height: 360 }} />
+            <ReactECharts key={themeId} option={radarOptions} style={{ height: 360 }} />
           ) : (
             <div className="rounded-3xl border border-dashed border-white/30 p-6 text-center text-sm text-[rgb(var(--text-secondary))] dark:border-slate-800">
               Cadastre medidas para visualizar o radar.
